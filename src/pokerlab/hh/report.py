@@ -34,12 +34,31 @@ class GradedDecision:
 
 
 @dataclass
+class FailedHand:
+    """A hand that could not be graded, and why (round-1 finding [8]).
+
+    Real hand histories carry malformed and unreplayable hands; one of them
+    must never cost the session. Failures are surfaced here rather than
+    swallowed, so a session report is never silently short.
+    """
+
+    hand_index: int          # index of the source hand in the session
+    hand_id: str | None      # site hand number, when the parse got that far
+    reason: str
+
+
+@dataclass
 class SessionReport:
     graded: list[GradedDecision] = field(default_factory=list)
+    failed_hands: list[FailedHand] = field(default_factory=list)
 
     @property
     def total(self) -> int:
         return len(self.graded)
+
+    @property
+    def failed_hand_count(self) -> int:
+        return len(self.failed_hands)
 
     @property
     def routed(self) -> dict[int, int]:
@@ -74,10 +93,28 @@ def grade_session(
 ) -> SessionReport:
     report = SessionReport()
     for hand_index, ph in enumerate(parsed_hands):
-        for d in extract_decisions(ph):
-            sol = (solution_for(d)
-                   if solution_for is not None and d.tier == TIER_SOLVER
-                   else None)
-            g = grade_decision(d, population=population, solution=sol)
+        hand_id = getattr(ph, "hand_id", None)
+        # Per-hand boundary: replay/extraction is where malformed histories bite
+        # (bad amounts, desynced action lists, seat mismatches). A hand that
+        # cannot be replayed is reported and skipped, never fatal.
+        try:
+            decisions = extract_decisions(ph)
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            report.failed_hands.append(
+                FailedHand(hand_index, hand_id, f"{type(exc).__name__}: {exc}"))
+            continue
+        # Per-decision boundary: a single unhandled spot loses that decision,
+        # not the hand's other (correctly graded) decisions.
+        for d in decisions:
+            try:
+                sol = (solution_for(d)
+                       if solution_for is not None and d.tier == TIER_SOLVER
+                       else None)
+                g = grade_decision(d, population=population, solution=sol)
+            except Exception as exc:  # noqa: BLE001 - isolation boundary
+                report.failed_hands.append(FailedHand(
+                    hand_index, hand_id,
+                    f"decision {d.index}: {type(exc).__name__}: {exc}"))
+                continue
             report.graded.append(GradedDecision(hand_index, d, g))
     return report

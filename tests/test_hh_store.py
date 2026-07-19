@@ -105,3 +105,48 @@ def test_leak_report_ranks_tiers_1_2_and_lists_tier3_separately() -> None:
     t3 = tier3_frequency_report(conn)
     t3_keys = {r["leak_key"] for r in t3}
     assert t3_keys and not (t3_keys & {row["leak_key"] for row in leaks})
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [10]: batch-drain isolation + startup recovery. A solver that
+# raises must fail its own row only, and rows stranded at 'running' by a crashed
+# earlier drain must be recovered rather than stuck forever.
+# --------------------------------------------------------------------------- #
+def test_raising_solver_fails_only_its_own_row() -> None:
+    conn, _report, counts = _persisted_session()
+    assert counts["queued"] >= 2, "need >1 queued row to prove isolation"
+    # the drain walks the queue in id order, so the first row is the casualty
+    first_id = db.pending_batch(conn)[0]["id"]
+    calls = []
+
+    def solver(spot_key: str, decision):
+        calls.append(spot_key)
+        if len(calls) == 1:
+            raise RuntimeError("solver exploded")
+        return _STUB_SOLUTION
+
+    result = drain_batch_queue(conn, solver, graded_at=AT)
+
+    # the drain kept going after the explosion
+    assert len(calls) == counts["queued"]
+
+    assert result["failed"] == 1
+    assert result["done"] == counts["queued"] - 1
+    statuses = {r["id"]: r["status"] for r in db.batch_rows(conn)}
+    assert statuses[first_id] == "failed"
+    assert all(s == "done" for rid, s in statuses.items() if rid != first_id)
+
+
+def test_stranded_running_rows_are_recovered_on_drain() -> None:
+    conn, _report, counts = _persisted_session()
+    # simulate a drain that died mid-row
+    stranded = db.pending_batch(conn)[0]["id"]
+    db.set_batch_status(conn, stranded, "running")
+    assert len(db.pending_batch(conn)) == counts["queued"] - 1
+
+    result = drain_batch_queue(conn, lambda spot, d: _STUB_SOLUTION, graded_at=AT)
+
+    assert result["recovered"] == 1
+    # the stranded row was picked back up and completed with the rest
+    assert result["done"] == counts["queued"]
+    assert all(r["status"] == "done" for r in db.batch_rows(conn))

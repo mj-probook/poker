@@ -86,15 +86,28 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
     """Batch worker: solve each pending spot, grade it tier-2, mark row done.
 
     A solver miss (returns None) marks the row failed and leaves it ungraded.
-    Returns counts {done, failed}.
+    So does a row that *raises* — a re-parse failure, a decision index that no
+    longer resolves, or a solver blowing up must cost that row only, never the
+    rest of the backlog (round-1 finding [10]).
+
+    Rows stranded at 'running' by an earlier crashed drain are recovered to
+    'pending' first, so the backlog cannot silently leak work.
+
+    Returns counts {done, failed, recovered}.
     """
+    recovered = db.recover_running_batch(conn)
     done = failed = 0
     for row in db.pending_batch(conn):
         db.set_batch_status(conn, row["id"], "running")
-        hand = db.get_imported_hand(conn, row["hand_id"])
-        parsed = parse_by_site(hand["site"], hand["raw"])
-        d = extract_decisions(parsed)[row["decision_idx"]]
-        solution = solver(row["spot_key"], d)
+        try:
+            hand = db.get_imported_hand(conn, row["hand_id"])
+            parsed = parse_by_site(hand["site"], hand["raw"])
+            d = extract_decisions(parsed)[row["decision_idx"]]
+            solution = solver(row["spot_key"], d)
+        except Exception:  # noqa: BLE001 - per-row isolation boundary
+            db.set_batch_status(conn, row["id"], "failed")
+            failed += 1
+            continue
         if solution is None:
             db.set_batch_status(conn, row["id"], "failed")
             failed += 1
@@ -104,4 +117,4 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
                           g.best or "", g.ev_loss, g.leak_key, graded_at)
         db.set_batch_status(conn, row["id"], "done")
         done += 1
-    return {"done": done, "failed": failed}
+    return {"done": done, "failed": failed, "recovered": recovered}

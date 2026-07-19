@@ -162,6 +162,20 @@ def batch_rows(conn: sqlite3.Connection) -> list[dict]:
         "SELECT * FROM batch_queue ORDER BY id")]
 
 
+def recover_running_batch(conn: sqlite3.Connection) -> int:
+    """Reset rows stranded at 'running' back to 'pending'; return the count.
+
+    A drain that dies mid-row (crash, kill, exception before the status is
+    finalized) leaves its row at 'running', where no later drain would ever pick
+    it up again. Recovery runs at drain start — single-user, single-writer, so a
+    'running' row at that moment is by definition abandoned (finding [10]).
+    """
+    cur = conn.execute(
+        "UPDATE batch_queue SET status='pending' WHERE status='running'")
+    conn.commit()
+    return int(cur.rowcount)
+
+
 def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str) -> None:
     if status not in ("pending", "running", "done", "failed"):
         raise ValueError(f"bad batch status {status!r}")
