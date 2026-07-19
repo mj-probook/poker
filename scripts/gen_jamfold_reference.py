@@ -26,41 +26,59 @@ OUT = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "jamfold_refe
 DEPTHS = (5, 8, 10, 15, 20)
 
 # ~30 entries hand-audited against published HU Nash push/fold facts.
-# Each: (hand, position, human-readable published fact).
+# Each: (hand, position, expected action per depth, human-readable fact).
+#
+# The `expect` map is what makes the audit load-bearing rather than decorative
+# (round-1 finding [3]): the test asserts the SOLVER takes each stated action at
+# each stated depth. It is transcribed from the published fact, NOT read back
+# out of our own table — an entry only lists the depths its fact actually
+# claims. Actions: SB -> "jam"|"fold", BB -> "call"|"fold".
+
+
+def _all(action: str) -> dict[int, str]:
+    return {d: action for d in DEPTHS}
+
+
+def _until(shallow: str, deep: str, cutoff: int) -> dict[int, str]:
+    """`shallow` below `cutoff` bb, `deep` at and above it."""
+    return {d: (shallow if d < cutoff else deep) for d in DEPTHS}
+
+
 HAND_AUDITED = [
-    ("AA", "SB", "premium jams at every depth 5-20bb"),
-    ("KK", "SB", "premium jams 5-20bb"),
-    ("QQ", "SB", "premium jams 5-20bb"),
-    ("JJ", "SB", "jams 5-20bb"),
-    ("TT", "SB", "jams 5-20bb"),
-    ("22", "SB", "any pair jams at <=20bb heads-up"),
-    ("55", "SB", "any pair jams 5-20bb"),
-    ("99", "SB", "any pair jams 5-20bb"),
-    ("A2s", "SB", "suited aces jam 5-20bb"),
-    ("AKs", "SB", "jams 5-20bb"),
-    ("A5s", "SB", "suited wheel ace jams 5-20bb"),
-    ("A2o", "SB", "offsuit aces jam wide heads-up (5-20bb)"),
-    ("K9o", "SB", "broadway-ish Kxo jams 5-20bb"),
-    ("T9s", "SB", "suited connector jams 5-20bb"),
-    ("98s", "SB", "suited connector jams 5-20bb"),
-    ("54s", "SB", "suited connector jams 5-20bb"),
-    ("K2s", "SB", "marginal suited K jams shallow, folds ~20bb"),
-    ("Q2s", "SB", "weak suited Q jams shallow, folds by 15bb"),
-    ("J8o", "SB", "weak Jxo jams shallow, folds by 15bb"),
-    ("72o", "SB", "worst hand: folds at 5-20bb (only jams sub-4bb)"),
-    ("32o", "SB", "trash offsuit folds 5-20bb"),
-    ("AA", "BB", "always calls a jam"),
-    ("KK", "BB", "always calls a jam"),
-    ("QQ", "BB", "always calls a jam"),
-    ("33", "BB", "small pair calls 5-20bb"),
-    ("55", "BB", "calls 5-20bb"),
-    ("A2s", "BB", "A2s calling a 10bb SB jam is a (close) call"),
-    ("AKo", "BB", "calls 5-20bb"),
-    ("KTo", "BB", "calls 5-20bb"),
-    ("QTs", "BB", "calls 5-20bb"),
-    ("22", "BB", "small pair calls shallow, folds vs a 20bb jam"),
-    ("A2o", "BB", "calls shallow, folds vs a 20bb jam"),
-    ("72o", "BB", "never calls (folds 5-20bb)"),
+    ("AA", "SB", _all("jam"), "premium jams at every depth 5-20bb"),
+    ("KK", "SB", _all("jam"), "premium jams 5-20bb"),
+    ("QQ", "SB", _all("jam"), "premium jams 5-20bb"),
+    ("JJ", "SB", _all("jam"), "jams 5-20bb"),
+    ("TT", "SB", _all("jam"), "jams 5-20bb"),
+    ("22", "SB", _all("jam"), "any pair jams at <=20bb heads-up"),
+    ("55", "SB", _all("jam"), "any pair jams 5-20bb"),
+    ("99", "SB", _all("jam"), "any pair jams 5-20bb"),
+    ("A2s", "SB", _all("jam"), "suited aces jam 5-20bb"),
+    ("AKs", "SB", _all("jam"), "jams 5-20bb"),
+    ("A5s", "SB", _all("jam"), "suited wheel ace jams 5-20bb"),
+    ("A2o", "SB", _all("jam"), "offsuit aces jam wide heads-up (5-20bb)"),
+    ("K9o", "SB", _all("jam"), "broadway-ish Kxo jams 5-20bb"),
+    ("T9s", "SB", _all("jam"), "suited connector jams 5-20bb"),
+    ("98s", "SB", _all("jam"), "suited connector jams 5-20bb"),
+    ("54s", "SB", _all("jam"), "suited connector jams 5-20bb"),
+    ("K2s", "SB", _until("jam", "fold", 20), "marginal suited K jams shallow, folds ~20bb"),
+    ("Q2s", "SB", _until("jam", "fold", 15), "weak suited Q jams shallow, folds by 15bb"),
+    ("J8o", "SB", _until("jam", "fold", 15), "weak Jxo jams shallow, folds by 15bb"),
+    ("72o", "SB", _all("fold"), "worst hand: folds at 5-20bb (only jams sub-4bb)"),
+    ("32o", "SB", _all("fold"), "trash offsuit folds 5-20bb"),
+    ("AA", "BB", _all("call"), "always calls a jam"),
+    ("KK", "BB", _all("call"), "always calls a jam"),
+    ("QQ", "BB", _all("call"), "always calls a jam"),
+    ("33", "BB", _all("call"), "small pair calls 5-20bb"),
+    ("55", "BB", _all("call"), "calls 5-20bb"),
+    # this fact speaks only to a 10bb jam, so only 10bb is audited
+    ("A2s", "BB", {10: "call"}, "A2s calling a 10bb SB jam is a (close) call"),
+    ("AKo", "BB", _all("call"), "calls 5-20bb"),
+    ("KTo", "BB", _all("call"), "calls 5-20bb"),
+    ("QTs", "BB", _all("call"), "calls 5-20bb"),
+    ("22", "BB", _until("call", "fold", 20), "small pair calls shallow, folds vs a 20bb jam"),
+    ("A2o", "BB", _until("call", "fold", 20), "calls shallow, folds vs a 20bb jam"),
+    ("72o", "BB", _all("fold"), "never calls (folds 5-20bb)"),
 ]
 
 
@@ -85,8 +103,10 @@ def main() -> None:
             "provenance": "100% self-generated; published Nash facts used only to "
                           "sanity-audit, never as data (CLAUDE.md).",
             "hand_audited": [
-                {"hand": h, "position": pos, "published_fact": fact}
-                for h, pos, fact in HAND_AUDITED
+                {"hand": h, "position": pos,
+                 "expect": {str(d): a for d, a in expect.items()},
+                 "published_fact": fact}
+                for h, pos, expect, fact in HAND_AUDITED
             ],
             "agreement_threshold": 0.99,
         },

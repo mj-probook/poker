@@ -1,9 +1,22 @@
-"""Slice C — jam/fold reference-table regression (impl doc §3 Slice C exit).
+"""Slice C — jam/fold reference-table checks (impl doc §3 Slice C exit).
 
-Guards the solver against drift: the current solve must still agree with the
-frozen tests/fixtures/jamfold_reference.json on ≥99% of hand decisions at every
-audited depth. Regenerate the baseline with scripts/gen_jamfold_reference.py
-only on an intentional model change.
+Two DIFFERENT things live here, and conflating them overstated the evidence
+(round-1 finding [3]):
+
+1. **Regression guard vs a frozen self-generated table** — the ≥99% agreement
+   check. The baseline in tests/fixtures/jamfold_reference.json is *our own
+   solver's* output, frozen. Agreement with it proves the solver has not
+   drifted; it is NOT a check against published Nash charts, and never was.
+   Regenerate with scripts/gen_jamfold_reference.py only on an intentional
+   model change.
+
+2. **Hand-audited published-fact check** — the ~30 entries in
+   `_meta.hand_audited`, each transcribed from a well-known published HU
+   push/fold fact into a machine-readable per-depth expected action. These
+   assert the SOLVER's action, so they are the part that can actually catch the
+   solver being wrong rather than merely inconsistent. (Nothing vendor-derived
+   enters the table — the facts are a sanity cross-reference only, per
+   CLAUDE.md.)
 """
 
 import json
@@ -27,6 +40,12 @@ def _action(freq: float) -> bool:
 
 
 def test_solver_agrees_with_frozen_reference_99pct(ref):
+    """Regression guard vs the FROZEN SELF-GENERATED table — drift detection.
+
+    Not a published-Nash check: the baseline is our own solver's frozen output,
+    so this can only catch the solver changing, never the solver being wrong.
+    The published-fact evidence is the hand-audited test below.
+    """
     match = total = 0
     for depth in ref["_meta"]["depths_bb"]:
         sol = solve_jamfold(float(depth))
@@ -48,10 +67,39 @@ def test_reference_covers_all_169_hands_at_every_depth(ref):
 def test_at_least_30_hand_audited_entries_documented(ref):
     audited = ref["_meta"]["hand_audited"]
     assert len(audited) >= 30
+    depths = {str(d) for d in ref["_meta"]["depths_bb"]}
     for entry in audited:
         assert entry["hand"] in hands.HAND_INDEX
         assert entry["position"] in ("SB", "BB")
         assert entry["published_fact"]
+        # every entry must state a checkable direction, or it is decorative
+        assert entry["expect"], f"{entry['hand']} has no audited expectation"
+        assert set(entry["expect"]) <= depths
+        legal = {"jam", "fold"} if entry["position"] == "SB" else {"call", "fold"}
+        assert set(entry["expect"].values()) <= legal
+
+
+def test_solver_matches_every_hand_audited_published_fact(ref):
+    """[3] The audit is load-bearing: the SOLVER must take each stated action.
+
+    This is the only check here that compares against something other than our
+    own frozen output, so it is what would catch a solver that is consistently
+    wrong rather than merely drifting.
+    """
+    failures = []
+    for entry in ref["_meta"]["hand_audited"]:
+        i = hands.HAND_INDEX[entry["hand"]]
+        sb = entry["position"] == "SB"
+        for depth, expected in entry["expect"].items():
+            sol = solve_jamfold(float(depth))     # lru_cached across depths
+            freq = float(sol.sb_jam[i] if sb else sol.bb_call[i])
+            actual = ("jam" if sb else "call") if _action(freq) else "fold"
+            if actual != expected:
+                failures.append(
+                    f"{entry['position']} {entry['hand']} @{depth}bb: "
+                    f"solver={actual} (freq {freq:.3f}) but audited as "
+                    f"{expected} — {entry['published_fact']}")
+    assert not failures, "audited published facts violated:\n" + "\n".join(failures)
 
 
 def test_audited_premium_and_trash_entries_are_consistent(ref):

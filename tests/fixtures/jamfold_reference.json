@@ -15,166 +15,393 @@
    {
     "hand": "AA",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "premium jams at every depth 5-20bb"
    },
    {
     "hand": "KK",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "premium jams 5-20bb"
    },
    {
     "hand": "QQ",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "premium jams 5-20bb"
    },
    {
     "hand": "JJ",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "jams 5-20bb"
    },
    {
     "hand": "TT",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "jams 5-20bb"
    },
    {
     "hand": "22",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "any pair jams at <=20bb heads-up"
    },
    {
     "hand": "55",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "any pair jams 5-20bb"
    },
    {
     "hand": "99",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "any pair jams 5-20bb"
    },
    {
     "hand": "A2s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "suited aces jam 5-20bb"
    },
    {
     "hand": "AKs",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "jams 5-20bb"
    },
    {
     "hand": "A5s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "suited wheel ace jams 5-20bb"
    },
    {
     "hand": "A2o",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "offsuit aces jam wide heads-up (5-20bb)"
    },
    {
     "hand": "K9o",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "broadway-ish Kxo jams 5-20bb"
    },
    {
     "hand": "T9s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "suited connector jams 5-20bb"
    },
    {
     "hand": "98s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "suited connector jams 5-20bb"
    },
    {
     "hand": "54s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "jam"
+    },
     "published_fact": "suited connector jams 5-20bb"
    },
    {
     "hand": "K2s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "jam",
+     "20": "fold"
+    },
     "published_fact": "marginal suited K jams shallow, folds ~20bb"
    },
    {
     "hand": "Q2s",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "fold",
+     "20": "fold"
+    },
     "published_fact": "weak suited Q jams shallow, folds by 15bb"
    },
    {
     "hand": "J8o",
     "position": "SB",
+    "expect": {
+     "5": "jam",
+     "8": "jam",
+     "10": "jam",
+     "15": "fold",
+     "20": "fold"
+    },
     "published_fact": "weak Jxo jams shallow, folds by 15bb"
    },
    {
     "hand": "72o",
     "position": "SB",
+    "expect": {
+     "5": "fold",
+     "8": "fold",
+     "10": "fold",
+     "15": "fold",
+     "20": "fold"
+    },
     "published_fact": "worst hand: folds at 5-20bb (only jams sub-4bb)"
    },
    {
     "hand": "32o",
     "position": "SB",
+    "expect": {
+     "5": "fold",
+     "8": "fold",
+     "10": "fold",
+     "15": "fold",
+     "20": "fold"
+    },
     "published_fact": "trash offsuit folds 5-20bb"
    },
    {
     "hand": "AA",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "always calls a jam"
    },
    {
     "hand": "KK",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "always calls a jam"
    },
    {
     "hand": "QQ",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "always calls a jam"
    },
    {
     "hand": "33",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "small pair calls 5-20bb"
    },
    {
     "hand": "55",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "calls 5-20bb"
    },
    {
     "hand": "A2s",
     "position": "BB",
+    "expect": {
+     "10": "call"
+    },
     "published_fact": "A2s calling a 10bb SB jam is a (close) call"
    },
    {
     "hand": "AKo",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "calls 5-20bb"
    },
    {
     "hand": "KTo",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "calls 5-20bb"
    },
    {
     "hand": "QTs",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "call"
+    },
     "published_fact": "calls 5-20bb"
    },
    {
     "hand": "22",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "fold"
+    },
     "published_fact": "small pair calls shallow, folds vs a 20bb jam"
    },
    {
     "hand": "A2o",
     "position": "BB",
+    "expect": {
+     "5": "call",
+     "8": "call",
+     "10": "call",
+     "15": "call",
+     "20": "fold"
+    },
     "published_fact": "calls shallow, folds vs a 20bb jam"
    },
    {
     "hand": "72o",
     "position": "BB",
+    "expect": {
+     "5": "fold",
+     "8": "fold",
+     "10": "fold",
+     "15": "fold",
+     "20": "fold"
+    },
     "published_fact": "never calls (folds 5-20bb)"
    }
   ],
