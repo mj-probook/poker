@@ -53,3 +53,36 @@ def test_ante_heads_up_showdown_replays() -> None:
     parsed = parse_pokerstars((FIXTURES / "ps_ante_hu.txt").read_text())
     assert parsed.setup.ante == 75 and len(parsed.setup.stacks) == 2
     _assert_replay_matches(parsed)
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [9]: the dead button. When a player busts, the announced
+# button seat can be an EMPTY seat — the button is "dead" and the blinds stay
+# where the rotation put them. Parsing must not crash on it.
+# --------------------------------------------------------------------------- #
+def test_dead_button_falls_back_to_an_occupied_seat() -> None:
+    parsed = parse_pokerstars((FIXTURES / "ps_dead_button.txt").read_text())
+
+    # seats {1, 2, 5} occupied; the announced button (seat #4) is empty
+    assert len(parsed.setup.stacks) == 3
+    # nearest occupied seat counter-clockwise from #4 is #2 -> engine index 1
+    assert parsed.setup.button == 1
+    _assert_replay_matches(parsed)
+
+
+def test_dead_button_fallback_agrees_with_the_posted_blinds() -> None:
+    """The fallback is only correct if it reproduces the blinds the HH states.
+
+    Engine order for n>=3 is SB=(button+1)%n, BB=(button+2)%n; the fixture posts
+    the SB from seat #5 and the BB from seat #1, which pins the button to #2.
+    """
+    from pokerlab.hh.decisions import position_label
+
+    parsed = parse_pokerstars((FIXTURES / "ps_dead_button.txt").read_text())
+    n, button = len(parsed.setup.stacks), parsed.setup.button
+    names = parsed.seat_names
+    pos = {names[i]: position_label(n, button, i) for i in range(n)}
+
+    assert pos["VillainB"] == "SB"   # seat 5 posted the small blind
+    assert pos["Hero"] == "BB"       # seat 1 posted the big blind
+    assert pos["VillainA"] == "BTN"  # seat 2 carries the dead button

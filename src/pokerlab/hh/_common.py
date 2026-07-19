@@ -47,6 +47,24 @@ def _cards(s: str) -> tuple[int, ...]:
     return tuple(card_from_str(tok) for tok in s.split())
 
 
+def _button_index(seat_nos: list[int], button_seat: int) -> int:
+    """Engine seat index for the announced button seat — dead button tolerated.
+
+    When a player busts, the button can be announced on a seat nobody occupies
+    (the "dead button"): the blinds stay where the rotation put them and the
+    button is simply not in play. Falling back to the nearest occupied seat
+    **counter-clockwise** (the largest occupied seat number below the announced
+    one, wrapping to the highest seat) is what keeps the engine's derived
+    SB=(button+1)%n / BB=(button+2)%n consistent with the blinds the history
+    actually posts — verified against tests/fixtures/hh/ps_dead_button.txt
+    (round-1 finding [9]).
+    """
+    if button_seat in seat_nos:
+        return seat_nos.index(button_seat)
+    earlier = [s for s in seat_nos if s < button_seat]
+    return seat_nos.index(max(earlier) if earlier else max(seat_nos))
+
+
 def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
     lines = [ln.rstrip("\n") for ln in text.strip().splitlines()]
 
@@ -72,7 +90,7 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
     stacks = [t[2] for t in seats]
     n = len(seats)
     idx = {name: i for i, name in enumerate(names)}
-    button = seat_nos.index(button_seat)
+    button = _button_index(seat_nos, button_seat)
 
     ante = 0
     for ln in lines:
