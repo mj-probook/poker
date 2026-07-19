@@ -61,25 +61,46 @@ def _summary_json(ph: ParsedHand) -> str:
 
 def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
                     *, graded_at: str, raw_texts: list[str] | None = None) -> dict:
-    """Persist a graded session. Returns counts {imported, graded, queued}."""
-    hand_ids: list[int] = []
-    for i, ph in enumerate(parsed_hands):
-        raw = raw_texts[i] if raw_texts is not None else ""
-        hand_ids.append(db.insert_imported_hand(
-            conn, ph.site, raw, _summary_json(ph), graded_at))
+    """Persist a graded session atomically. Counts {imported, graded, queued, skipped}.
 
-    n_graded = n_queued = 0
-    for gd in report.graded:
-        hid = hand_ids[gd.hand_index]
-        g = gd.grading
-        if g.graded:
-            db.insert_grading(conn, hid, g.decision_index, g.tier, g.chosen,
-                              g.best or "", g.ev_loss, g.leak_key, graded_at)
-            n_graded += 1
-        elif g.tier == TIER_SOLVER:
-            db.enqueue_batch(conn, spot_key(gd.decision), hid, g.decision_index)
-            n_queued += 1
-    return {"imported": len(hand_ids), "graded": n_graded, "queued": n_queued}
+    One transaction: either the whole session lands or none of it does, so a
+    failure part-way through cannot leave a half-written session behind. Hands
+    already imported (same site + HH hand number) are skipped along with their
+    gradings, so re-importing a file never double-counts into the leak stats
+    (round-1 finding [11]).
+    """
+    n_graded = n_queued = n_skipped = 0
+    try:
+        hand_ids: list[int | None] = []
+        for i, ph in enumerate(parsed_hands):
+            raw = raw_texts[i] if raw_texts is not None else ""
+            hid = db.insert_imported_hand(
+                conn, ph.site, raw, _summary_json(ph), graded_at,
+                ph.hand_id, commit=False)
+            if hid is None:
+                n_skipped += 1
+            hand_ids.append(hid)
+
+        for gd in report.graded:
+            hid = hand_ids[gd.hand_index]
+            if hid is None:
+                continue  # duplicate hand: its gradings are already stored
+            g = gd.grading
+            if g.graded:
+                db.insert_grading(conn, hid, g.decision_index, g.tier, g.chosen,
+                                  g.best or "", g.ev_loss, g.leak_key, graded_at,
+                                  commit=False)
+                n_graded += 1
+            elif g.tier == TIER_SOLVER:
+                db.enqueue_batch(conn, spot_key(gd.decision), hid,
+                                 g.decision_index, commit=False)
+                n_queued += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"imported": sum(h is not None for h in hand_ids),
+            "graded": n_graded, "queued": n_queued, "skipped": n_skipped}
 
 
 def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:

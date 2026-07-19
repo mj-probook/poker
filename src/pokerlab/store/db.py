@@ -80,14 +80,15 @@ def all_sr_state(conn: sqlite3.Connection) -> list[dict]:
 # --------------------------------------------------------------------------- #
 def insert_grading(conn: sqlite3.Connection, hand_id: int, decision_idx: int,
                    tier: int, chosen: str, best: str, ev_loss: float | None,
-                   leak_key: str, graded_at: str) -> int:
+                   leak_key: str, graded_at: str, *, commit: bool = True) -> int:
     cur = conn.execute(
         "INSERT INTO gradings(hand_id, decision_idx, tier, chosen, best,"
         " ev_loss, leak_key, graded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (hand_id, decision_idx, tier, chosen, best,
          None if ev_loss is None else float(ev_loss), leak_key, graded_at),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid)
 
 
@@ -100,14 +101,23 @@ def gradings(conn: sqlite3.Connection) -> list[dict]:
 # re-derive a decision from storage when a solve finally lands)
 # --------------------------------------------------------------------------- #
 def insert_imported_hand(conn: sqlite3.Connection, site: str, raw: str,
-                         parsed_json: str, imported_at: str) -> int:
+                         parsed_json: str, imported_at: str,
+                         hand_uid: str | None = None, *,
+                         commit: bool = True) -> int | None:
+    """Insert a hand; return its id, or None if (site, hand_uid) already exists.
+
+    ``commit=False`` lets a caller group many writes into one transaction (see
+    `hh.persist.persist_session`, round-1 finding [11]).
+    """
     cur = conn.execute(
-        "INSERT INTO imported_hands(site, raw, parsed_json, imported_at)"
-        " VALUES (?, ?, ?, ?)",
-        (site, raw, parsed_json, imported_at),
+        "INSERT OR IGNORE INTO imported_hands"
+        "(site, raw, parsed_json, imported_at, hand_uid)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (site, raw, parsed_json, imported_at, hand_uid or None),
     )
-    conn.commit()
-    return int(cur.lastrowid)
+    if commit:
+        conn.commit()
+    return None if cur.rowcount == 0 else int(cur.lastrowid)
 
 
 def get_imported_hand(conn: sqlite3.Connection, hand_id: int) -> dict | None:
@@ -142,13 +152,14 @@ def solution_path(conn: sqlite3.Connection, spot_key: str) -> str | None:
 # batch_queue (tier-2 solve backlog: miss -> pending; worker drains it)
 # --------------------------------------------------------------------------- #
 def enqueue_batch(conn: sqlite3.Connection, spot_key: str, hand_id: int,
-                  decision_idx: int) -> int:
+                  decision_idx: int, *, commit: bool = True) -> int:
     cur = conn.execute(
         "INSERT INTO batch_queue(spot_key, hand_id, decision_idx, status)"
         " VALUES (?, ?, ?, 'pending')",
         (spot_key, hand_id, decision_idx),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid)
 
 

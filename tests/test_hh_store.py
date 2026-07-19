@@ -7,6 +7,8 @@ the (not-yet-landed) real solver behind the injected `Solver` seam.
 
 from pathlib import Path
 
+import pytest
+
 from pokerlab.hh.persist import drain_batch_queue, persist_session
 from pokerlab.hh.ggpoker import parse_ggpoker
 from pokerlab.hh.pokerstars import parse_pokerstars
@@ -150,3 +152,64 @@ def test_stranded_running_rows_are_recovered_on_drain() -> None:
     # the stranded row was picked back up and completed with the rest
     assert result["done"] == counts["queued"]
     assert all(r["status"] == "done" for r in db.batch_rows(conn))
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [11]: persist_session was neither atomic nor idempotent — a
+# failure part-way left a half-written session behind, and re-importing the same
+# file double-counted every hand into the leak stats.
+# --------------------------------------------------------------------------- #
+def test_failed_persist_leaves_no_rows(monkeypatch) -> None:
+    parsed, raws = _load()
+    report = grade_session(parsed, population=load_population())
+    conn = db.connect()
+
+    calls = {"n": 0}
+    real = db.insert_grading
+
+    def exploding(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("disk full")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("pokerlab.hh.persist.db.insert_grading", exploding)
+
+    with pytest.raises(RuntimeError):
+        persist_session(conn, parsed, report, graded_at=AT, raw_texts=raws)
+
+    # all-or-nothing: no partial session survives
+    assert db.gradings(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM imported_hands").fetchone()[0] == 0
+    assert db.batch_rows(conn) == []
+
+
+def test_reimporting_the_same_file_is_idempotent() -> None:
+    parsed, raws = _load()
+    report = grade_session(parsed, population=load_population())
+    conn = db.connect()
+
+    first = persist_session(conn, parsed, report, graded_at=AT, raw_texts=raws)
+    assert first["skipped"] == 0
+    n_hands = len(db.gradings(conn))
+
+    second = persist_session(conn, parsed, report, graded_at=AT, raw_texts=raws)
+
+    assert second["skipped"] == len(parsed)
+    assert second["imported"] == 0 and second["graded"] == 0
+    # no double-counted gradings, no duplicate queue rows
+    assert len(db.gradings(conn)) == n_hands
+    assert conn.execute(
+        "SELECT COUNT(*) FROM imported_hands").fetchone()[0] == len(parsed)
+
+
+def test_imported_hands_records_the_source_hand_number() -> None:
+    parsed, raws = _load()
+    report = grade_session(parsed, population=load_population())
+    conn = db.connect()
+    persist_session(conn, parsed, report, graded_at=AT, raw_texts=raws)
+
+    uids = [r["hand_uid"] for r in conn.execute(
+        "SELECT hand_uid FROM imported_hands ORDER BY id")]
+    assert uids == [ph.hand_id for ph in parsed]
+    assert all(u for u in uids)

@@ -7,7 +7,12 @@ CREATE TABLE IF NOT EXISTS imported_hands(
   site TEXT NOT NULL,
   raw TEXT NOT NULL,
   parsed_json TEXT NOT NULL,
-  imported_at TEXT NOT NULL
+  imported_at TEXT NOT NULL,
+  hand_uid TEXT,                      -- site hand number from the HH header
+  -- Re-importing a file must not double-count hands into the leak stats.
+  -- NULLs stay distinct in SQLite, so hands whose number did not parse are
+  -- simply never deduped (they import, as before).
+  UNIQUE(site, hand_uid)
 );
 
 CREATE TABLE IF NOT EXISTS gradings(
