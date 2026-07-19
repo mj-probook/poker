@@ -5,9 +5,24 @@ Bridges the pure `hh.report` grading to Slice E's `store`:
     decision to `gradings` (tier-3 rows carry NULL ev_loss — the honesty
     trigger stays satisfied), and enqueues every tier-2 *miss* into
     `batch_queue` (report marked partial by the pending count).
-  * `drain_batch_queue` is the batch worker: for each pending row it calls the
-    (injected) solver, and on a hit re-derives the decision from the stored raw
-    hand and grades it tier-2, marking the row done/failed.
+  * `drain_batch_queue` is the batch worker: for each pending row it re-derives
+    the decision from the stored raw hand, passes it to the injected solver,
+    grades tier-2 on a hit, and marks the row done/failed. Re-deriving comes
+    first — the solver is called *with* a decision, not consulted before one
+    exists.
+
+Three invariants the seam depends on, all load-bearing:
+  * **Atomic.** A tier-2 grading and the row-status transition that describes it
+    commit together or not at all, so a crash can never leave a row marked
+    'done' with no grading behind it (or the reverse).
+  * **Deduped.** `imported_hands` carries UNIQUE(site, hand_uid); a re-imported
+    session is skipped rather than double-counted, and a hand that failed to
+    replay claims no uid at all — so it re-imports cleanly once the parser is
+    fixed.
+  * **Recoverable.** Rows stranded at 'running' by a crashed drain are returned
+    to 'pending' at the start of the next drain. 'failed' means permanently
+    unsolvable (the solver raised `UnsolvableSpot`), never "transiently missed" —
+    a miss stays pending backlog and remains drainable.
 
 The solver is injected (stub in tests, real solver in integration), so nothing
 here depends on Slice D landing.

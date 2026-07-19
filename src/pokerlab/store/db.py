@@ -1,10 +1,18 @@
 """SQLite wrapper for the checked-in schema (impl doc §2; plan §3 storage).
 
 This module owns exactly two things: applying `store/schema.sql` to a fresh
-connection, and typed insert/query helpers for the tables Slice E writes
-(`drill_attempts`, `sr_state`) plus `gradings` (so the tier-3 honesty trigger
-is reachable from Python). Every *derived* metric — leak rankings, accuracy
-trends — is a query in `store/views.py`, never a table here (plan §3).
+connection, and the typed insert/query helpers for every app table:
+
+  * `drill_attempts`, `sr_state` — Slice E's drill loop
+  * `gradings` — so the tier-3 honesty trigger is reachable from Python
+  * `imported_hands` — HH import, including UNIQUE(site, hand_uid) dedup
+  * `solution_index` — the tier-2 solve library (`index_solution` is the ONE
+    writer; a second copy in `solver.solve_io` was deleted in wave-2 [Q1])
+  * `batch_queue` — the tier-2 backlog, including `recover_running_batch`
+    (un-strand rows from a crashed drain) and `retry_failed_batch`
+
+Every *derived* metric — leak rankings, accuracy trends — is a query in
+`store/views.py`, never a table here (plan §3).
 """
 
 from __future__ import annotations

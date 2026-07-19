@@ -3,8 +3,11 @@
 Canonical external sampling (Lanctot et al. 2009): for each traverser i, sample
 chance and opponent actions, recurse over ALL of i's own actions. Regrets update
 at i's nodes (unweighted — sampling supplies the reach); the average strategy
-accumulates at opponent nodes. Seeded RNG => deterministic tests. Looser bar than
-CFR+ (≤5e-3) per the milestone spec.
+accumulates at opponent nodes. Seeded RNG => deterministic tests.
+
+The ≤5e-3 exploitability bar is impl doc §3 Slice B's, NOT a milestone exit:
+PLAN pins only the 1e-3 CFR+ bar (M1). Sampling converges slower than the full
+tree walk, so MCCFR is held to the looser Slice-B figure.
 """
 
 from __future__ import annotations
