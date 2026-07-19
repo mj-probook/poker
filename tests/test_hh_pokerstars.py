@@ -111,3 +111,53 @@ def test_per_player_ante_fixture_is_unchanged() -> None:
     parsed = parse_pokerstars((FIXTURES / "ps_ante_hu.txt").read_text())
     assert parsed.setup.ante == 75 and parsed.setup.bb_ante == 0
     _assert_replay_matches(parsed)
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 finding [E6]: the ante classifier keyed off HOW MANY seats posted an
+# ante rather than WHO did, and excluded n==2 outright. Modern PokerStars emits
+# a heads-up big-blind ante as a lone unlabelled "posts the ante" line, so both
+# seats were charged and every such hand died at reconciliation -- HU at <=20bb
+# is exactly the tier-1 jam/fold class the pipeline exists for. The rule is now
+# "a lone ante posted by the big blind is a BB ante", which needs no seat-count
+# special case and settles the 3-handed case below in the other direction.
+# --------------------------------------------------------------------------- #
+def test_heads_up_big_blind_ante_is_not_charged_to_both_seats() -> None:
+    parsed = parse_pokerstars((FIXTURES / "ps_bb_ante_hu.txt").read_text())
+    assert parsed.setup.bb_ante == 600
+    assert parsed.setup.ante == 0          # was 600 -> both seats overcharged
+    _assert_replay_matches(parsed)
+
+
+def test_lone_per_player_ante_from_a_non_blind_stays_per_player() -> None:
+    """3-handed, one genuine per-player ante line: the poster is NOT the BB."""
+    text = (
+        "PokerStars Hand #240000000012: Tournament #3900000012, $100+$9 USD "
+        "Hold'em No Limit - Level XX (100/200) - 2024/03/06 15:00:00 ET\n"
+        "Table '3900000012 3' 3-max Seat #1 is the button\n"
+        "Seat 1: VillainA (5000 in chips)\n"
+        "Seat 2: VillainB (5000 in chips)\n"
+        "Seat 3: Hero (5000 in chips)\n"
+        "VillainA: posts the ante 25\n"
+        "VillainB: posts small blind 100\n"
+        "Hero: posts big blind 200\n"
+        "*** HOLE CARDS ***\n"
+        "Dealt to Hero [As Ks]\n"
+        "VillainA: folds\n"
+        "VillainB: folds\n"
+        "Uncalled bet (100) returned to Hero\n"
+        "Hero collected 225 from pot\n"
+        "*** SUMMARY ***\n"
+        "Total pot 225 | Rake 0\n"
+        "Seat 3: Hero (big blind) collected (225)\n"
+    )
+    parsed = parse_pokerstars(text)
+    assert parsed.setup.ante == 25         # was read as a BB ante
+    assert parsed.setup.bb_ante == 0
+
+
+def test_multiway_big_blind_ante_fixture_is_unchanged() -> None:
+    """The lone poster IS the big blind here, so this stays a BB ante."""
+    parsed = parse_pokerstars((FIXTURES / "ps_bb_ante.txt").read_text())
+    assert parsed.setup.bb_ante == 600 and parsed.setup.ante == 0
+    _assert_replay_matches(parsed)

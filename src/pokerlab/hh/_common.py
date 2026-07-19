@@ -63,20 +63,35 @@ def _ante_posts(lines: list[str], idx: dict[str, int]) -> list[tuple[int, int, b
     return out
 
 
-def _read_antes(lines: list[str], idx: dict[str, int], n: int) -> tuple[int, int]:
+def _bb_poster(lines: list[str], idx: dict[str, int]) -> int | None:
+    """Engine seat index of whoever posts the big blind, if the text says."""
+    for ln in lines:
+        m = _BB.match(ln)
+        if m and m["name"] in idx:
+            return idx[m["name"]]
+    return None
+
+
+def _read_antes(lines: list[str], idx: dict[str, int]) -> tuple[int, int]:
     """(per_player_ante, bb_ante) — exactly one of the two is non-zero.
 
     Distinguishing them matters a lot: the engine charges a per-player ante to
     EVERY seat, so reading a big-blind ante as a per-player one overcharges the
     pot n-fold (round-1 finding [12], and this is the target sites' modern
-    format). The signal is how many seats actually posted:
+    format). The rules:
 
-      * several ante lines            -> per-player ante (the classic format);
-      * explicit "big blind ante"     -> BB ante, whatever the count;
-      * a lone ante line, >2 seated   -> BB ante (nobody else was charged).
+      * several ante lines        -> per-player ante (the classic format);
+      * explicit "big blind ante" -> BB ante, whatever the count;
+      * a lone ante line posted BY THE BIG BLIND -> BB ante;
+      * a lone ante line from anyone else        -> per-player ante.
 
-    A lone ante line heads-up stays per-player: with two seats, "only one seat
-    posted" is not evidence either way, so the historical reading wins.
+    The discriminator is *who* posted, not how many seats did (round-2 finding
+    [E6]). Counting seats got both edges wrong: it read a lone per-player ante
+    at a 3-handed table as a BB ante, and — because it excluded n==2 outright —
+    charged both seats for the lone ante line that modern PokerStars emits for
+    a heads-up big-blind ante, which dropped every such hand at reconciliation.
+    A big-blind ante is posted by the big blind by definition, so asking that
+    question directly settles both without a seat-count special case.
     """
     posts = _ante_posts(lines, idx)
     if not posts:
@@ -84,7 +99,7 @@ def _read_antes(lines: list[str], idx: dict[str, int], n: int) -> tuple[int, int
     if any(is_bb for _, _, is_bb in posts):
         return 0, next(amt for _, amt, is_bb in posts if is_bb)
     seats = {seat for seat, _, _ in posts}
-    if len(seats) == 1 and n > 2:
+    if len(seats) == 1 and posts[0][0] == _bb_poster(lines, idx):
         return 0, posts[0][1]
     return posts[0][1], 0
 
@@ -134,7 +149,7 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
     idx = {name: i for i, name in enumerate(names)}
     button = _button_index(seat_nos, button_seat)
 
-    ante, bb_ante = _read_antes(lines, idx, n)
+    ante, bb_ante = _read_antes(lines, idx)
 
     contributed = [0] * n
     collected = [0] * n
