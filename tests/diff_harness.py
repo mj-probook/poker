@@ -181,10 +181,25 @@ def _drain_forced_checks(s, drain_board) -> None:
     in `bets` and the board undealt. Comparing there compares a finished hand to
     an unfinished one.
 
-    The guard is deliberately strict: we advance ONLY when check is the sole
-    legal action. If PokerKit still offers a fold or a raise, the player had a
-    real decision our engine skipped -- a genuine engine bug -- and it must stay
-    a mismatch rather than be papered over here.
+    !! DIFFERENTIAL TOLERANCE -- read before widening !!
+
+    This is the second place the harness forgives a PokerKit disagreement (the
+    other is `_is_odd_chip_only`). Every such tolerance is a hole in the oracle,
+    so the guard is deliberately the narrowest one that works: we advance ONLY
+    when `check_or_call` is the SOLE legal action --
+
+        s.can_check_or_call() and not s.can_fold() and not s.can_complete_bet_or_raise_to()
+
+    -- i.e. only when PokerKit itself agrees the player has no choice to make.
+    If a fold or a raise is still on offer, the player had a real decision our
+    engine skipped, which is a genuine engine bug, and it stays a mismatch.
+
+    Do NOT relax this to "actor is not None" or "engine is terminal". Either
+    would silently absorb exactly the class of bug [E1] was -- a betting round
+    the engine ends too early -- and that bug reached us precisely because the
+    generator could not produce the states that expose it. A tolerance that
+    swallows an engine's premature close-out would make the differential blind
+    to its own most likely failure mode.
     """
     while (s.actor_index is not None and s.can_check_or_call()
            and not s.can_fold() and not s.can_complete_bet_or_raise_to()):
