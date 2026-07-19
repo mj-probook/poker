@@ -25,6 +25,7 @@ import numpy as np
 
 from pokerlab.cfr.game import Profile
 from pokerlab.cfr.leduc import LeducPoker, LeducState
+from pokerlab.cfr.regret import regret_match_np
 
 from .depth_limited import continuation_value, round2_entry_state
 from .pbs import DEAL, NUM_CARDS
@@ -90,10 +91,8 @@ class DepthLimitedSolver:
         self.W = DEAL.copy()  # 1/30 off-diagonal, 0 on diagonal (blocking)
 
     def _strategy(self, iset: tuple) -> np.ndarray:
-        pos = np.clip(self.regret[iset], 0.0, None)
-        s = pos.sum(axis=1, keepdims=True)
-        unif = np.full_like(pos, 1.0 / pos.shape[1])
-        return np.where(s > 0.0, pos / np.where(s > 0.0, s, 1.0), unif)
+        # regret is laid out (card, action), so actions are axis 1
+        return regret_match_np(self.regret[iset], axis=1)
 
     def _snapshot(self) -> dict[tuple, np.ndarray]:
         return {iset: self._strategy(iset) for iset in self.regret}

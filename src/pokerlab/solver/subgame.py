@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from pokerlab.cfr.regret import regret_match_np
 from pokerlab.charts import hands
 from pokerlab.engine.evaluator import rank_showdown
 from pokerlab.types import Card
@@ -443,10 +444,8 @@ class SubgameSolver:
     # ---- strategy from regret matching+ ----
     @staticmethod
     def _match(reg: np.ndarray) -> np.ndarray:
-        pos = np.maximum(reg, 0.0)
-        s = pos.sum(axis=0, keepdims=True)
-        a = reg.shape[0]
-        return np.where(s > 0, pos / np.where(s > 0, s, 1.0), 1.0 / a)
+        # regret is laid out (action, hand), so actions are axis 0
+        return regret_match_np(reg, axis=0)
 
     def _strategy(self, node: Decision) -> np.ndarray:
         return self._match(self.regret[node.nid])

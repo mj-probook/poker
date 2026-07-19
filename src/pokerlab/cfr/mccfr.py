@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 
 from .game import Game, Profile, Tree, build_tree
+from .regret import regret_match
 
 
 class MCCFRSolver:
@@ -36,13 +37,7 @@ class MCCFRSolver:
         self.t = 0
 
     def _strategy(self, iset: int) -> list[float]:
-        r = self.regret[iset]
-        pos = [x if x > 0.0 else 0.0 for x in r]
-        s = sum(pos)
-        if s > 0.0:
-            return [x / s for x in pos]
-        u = 1.0 / len(r)
-        return [u] * len(r)
+        return regret_match(self.regret[iset])
 
     def _sample(self, probs: list[float]) -> int:
         x = self.rng.random()

@@ -63,7 +63,13 @@ def test_no_betting_turn_game_equals_true_equity():
     s.iterate(1)  # single pass; no real decisions to train
     ev0 = s.on_policy_value(0)
     expected = _independent_equity(TURN, s.range0, s.range1, pot0=8.0)
-    assert ev0 == 0 or True  # keep flake-free intent explicit
+    # `ev0` is OOP's share of the pot in POT UNITS (bb), so it must land strictly
+    # inside (0, pot0) — a share, never the whole pot and never nothing. This is
+    # deliberately independent of `_independent_equity` below: the equality check
+    # would pass if the solver and the reference helper were rescaled the same
+    # wrong way, which is exactly how the round-1 [F1] units bug hid.
+    # (Replaces `assert ev0 == 0 or True`, which was true for every possible ev0.)
+    assert 0.0 < ev0 < 8.0
     assert abs(ev0 - expected) < 1e-6
 
 
