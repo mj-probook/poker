@@ -23,7 +23,9 @@ from pokerlab.types import Action
 
 _TABLE = re.compile(r"Table '(?P<name>[^']+)' (?P<max>\d+)-max Seat #(?P<btn>\d+) is the button")
 _SEAT = re.compile(r"Seat (?P<no>\d+): (?P<name>.+?) \((?P<stack>\d+) in chips\)")
-_ANTE = re.compile(r"(?P<name>.+?): posts the ante (?P<amt>\d+)")
+_ANTE = re.compile(r"(?P<name>.+?): posts (?:the )?ante (?P<amt>\d+)")
+# GGPoker spells the BB ante out; PokerStars emits a lone plain ante line.
+_BB_ANTE = re.compile(r"(?P<name>.+?): posts (?:the )?big blind ante (?P<amt>\d+)")
 _SB = re.compile(r"(?P<name>.+?): posts small blind (?P<amt>\d+)")
 _BB = re.compile(r"(?P<name>.+?): posts big blind (?P<amt>\d+)")
 _DEALT = re.compile(r"Dealt to (?P<name>.+?) \[(?P<cards>[^\]]+)\]")
@@ -45,6 +47,47 @@ _A_RAISE = re.compile(r"(?P<name>.+?): raises (?P<by>\d+) to (?P<to>\d+)")
 
 def _cards(s: str) -> tuple[int, ...]:
     return tuple(card_from_str(tok) for tok in s.split())
+
+
+def _ante_posts(lines: list[str], idx: dict[str, int]) -> list[tuple[int, int, bool]]:
+    """Every ante line as (seat, amount, is_bb_ante), in file order."""
+    out: list[tuple[int, int, bool]] = []
+    for ln in lines:
+        bb = _BB_ANTE.match(ln)
+        if bb and bb["name"] in idx:
+            out.append((idx[bb["name"]], int(bb["amt"]), True))
+            continue
+        a = _ANTE.match(ln)
+        if a and a["name"] in idx:
+            out.append((idx[a["name"]], int(a["amt"]), False))
+    return out
+
+
+def _read_antes(lines: list[str], idx: dict[str, int], n: int) -> tuple[int, int]:
+    """(per_player_ante, bb_ante) — exactly one of the two is non-zero.
+
+    Distinguishing them matters a lot: the engine charges a per-player ante to
+    EVERY seat, so reading a big-blind ante as a per-player one overcharges the
+    pot n-fold (round-1 finding [12], and this is the target sites' modern
+    format). The signal is how many seats actually posted:
+
+      * several ante lines            -> per-player ante (the classic format);
+      * explicit "big blind ante"     -> BB ante, whatever the count;
+      * a lone ante line, >2 seated   -> BB ante (nobody else was charged).
+
+    A lone ante line heads-up stays per-player: with two seats, "only one seat
+    posted" is not evidence either way, so the historical reading wins.
+    """
+    posts = _ante_posts(lines, idx)
+    if not posts:
+        return 0, 0
+    if any(is_bb for _, _, is_bb in posts):
+        seat, amt, _ = next(p for p in posts if p[2])
+        return 0, amt
+    seats = {seat for seat, _, _ in posts}
+    if len(seats) == 1 and n > 2:
+        return 0, posts[0][1]
+    return posts[0][1], 0
 
 
 def _button_index(seat_nos: list[int], button_seat: int) -> int:
@@ -92,12 +135,7 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
     idx = {name: i for i, name in enumerate(names)}
     button = _button_index(seat_nos, button_seat)
 
-    ante = 0
-    for ln in lines:
-        a = _ANTE.match(ln)
-        if a:
-            ante = int(a["amt"])
-            break
+    ante, bb_ante = _read_antes(lines, idx, n)
 
     contributed = [0] * n
     collected = [0] * n
@@ -110,10 +148,8 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
     hero = -1
 
     # antes + blinds -> contribution ledger only (engine re-posts from setup)
-    for ln in lines:
-        a = _ANTE.match(ln)
-        if a and a["name"] in idx:
-            contributed[idx[a["name"]]] += int(a["amt"])
+    for seat, amt, _is_bb in _ante_posts(lines, idx):
+        contributed[seat] += amt
     for ln in lines:
         for rx in (_SB, _BB):
             bm = rx.match(ln)
@@ -166,6 +202,7 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
         ante=ante,
         hole=tuple(hole),
         board=tuple(board),
+        bb_ante=bb_ante,
     )
     return ParsedHand(
         site=site,

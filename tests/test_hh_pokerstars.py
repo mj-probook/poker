@@ -86,3 +86,28 @@ def test_dead_button_fallback_agrees_with_the_posted_blinds() -> None:
     assert pos["VillainB"] == "SB"   # seat 5 posted the small blind
     assert pos["Hero"] == "BB"       # seat 1 posted the big blind
     assert pos["VillainA"] == "BTN"  # seat 2 carries the dead button
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [12][18]: the BB ante. Modern tournaments (the target format)
+# have the big blind post ONE ante for the table. The parser read the first
+# "posts the ante N" line as a PER-PLAYER ante, so the engine charged every
+# seat — an n-fold overcharge — and never matched "posts big blind ante" at all.
+# --------------------------------------------------------------------------- #
+def test_bb_ante_is_not_charged_to_every_seat() -> None:
+    parsed = parse_pokerstars((FIXTURES / "ps_bb_ante.txt").read_text())
+
+    # a single ante line in a 6-handed hand is a BB ante, not a per-player one
+    assert parsed.setup.ante == 0
+    assert parsed.setup.bb_ante == 600
+    # only the big blind paid it
+    assert parsed.contributed[2] == 900   # 600 ante + 600 bb - 300 uncalled
+    assert sum(parsed.contributed) == parsed.total_pot
+    _assert_replay_matches(parsed)
+
+
+def test_per_player_ante_fixture_is_unchanged() -> None:
+    """The per-player path must be untouched (two ante lines, HU)."""
+    parsed = parse_pokerstars((FIXTURES / "ps_ante_hu.txt").read_text())
+    assert parsed.setup.ante == 75 and parsed.setup.bb_ante == 0
+    _assert_replay_matches(parsed)

@@ -80,6 +80,18 @@ class Decision:
     # a pure function of these raw fields (see hh.grade).
 
 
+def _ante_bb(parsed: ParsedHand, n: int, bb: int) -> float:
+    """Per-player-equivalent ante in bb — what the jam/fold chart models.
+
+    The chart's `ante` is dead money contributed *per player*, so a big-blind
+    ante (one payment of `bb_ante` for the whole table) is the same dead money
+    as a per-player ante of `bb_ante / n` (round-1 finding [12]).
+    """
+    if parsed.setup.bb_ante:
+        return parsed.setup.bb_ante / (n * bb)
+    return parsed.setup.ante / bb
+
+
 def _action_type(chosen: Action, is_allin: bool) -> str:
     label, _ = chosen
     if label == "fold":
@@ -125,7 +137,7 @@ def extract_decisions(parsed: ParsedHand) -> list[Decision]:
                 pot=hand.pot,
                 pot_bb=hand.pot / bb,
                 eff_bb=eff_bb,
-                ante_bb=parsed.setup.ante / bb,
+                ante_bb=_ante_bb(parsed, n, bb),
                 to_call=hand.current_bet - hand.street_bet[hero],
                 opp_allin=any(
                     hand.allin[i] and not hand.folded[i]

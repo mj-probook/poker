@@ -43,3 +43,15 @@ def test_sb_open_fold_returns_uncalled_bb() -> None:
     parsed = parse_ggpoker((FIXTURES / "gg_sb_fold_leak.txt").read_text())
     assert parsed.total_pot == 400 and parsed.uncalled == 200
     _assert_replay_matches(parsed)
+
+
+def test_bb_ante_wording_is_parsed() -> None:
+    """[12][18] GGPoker spells it out: 'posts big blind ante N'."""
+    parsed = parse_ggpoker((FIXTURES / "gg_bb_ante.txt").read_text())
+    assert parsed.setup.ante == 0
+    assert parsed.setup.bb_ante == 400
+    assert parsed.contributed[2] == 600   # 400 ante + 400 bb - 200 uncalled
+    assert sum(parsed.contributed) == parsed.total_pot
+    hand = Hand.replay(parsed.setup, parsed.actions)
+    assert hand.is_terminal()
+    assert tuple(hand.final_stacks()) == parsed.stated_final_stacks()

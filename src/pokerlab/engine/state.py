@@ -34,6 +34,11 @@ class HandSetup:
     ante: int
     hole: tuple[tuple[Card, Card] | None, ...]
     board: tuple[Card, ...]  # up to 5 cards; revealed progressively
+    # Big-blind ante: ONE ante posted by the big blind for the whole table
+    # (the modern tournament format). Dead money — it never becomes a live bet,
+    # so it does not raise the amount anyone has to call. Mutually exclusive
+    # with `ante` in practice; both paths are independent (round-1 finding [12]).
+    bb_ante: int = 0
 
 
 class Hand:
@@ -46,6 +51,7 @@ class Hand:
         self.bb = setup.bb
         self.sb = setup.sb
         self.ante = setup.ante
+        self.bb_ante = setup.bb_ante
         self.hole = list(setup.hole)
         self.full_board = list(setup.board)
 
@@ -92,14 +98,22 @@ class Hand:
         if self.stack_left[seat] == 0:
             self.allin[seat] = True
 
+    def _post_ante(self, seat: int, amount: int) -> None:
+        """Charge a dead-money ante: contribution only, never a live bet."""
+        amt = min(amount, self.stack_left[seat])
+        self.contrib[seat] += amt
+        self.stack_left[seat] -= amt
+        if self.stack_left[seat] == 0:
+            self.allin[seat] = True
+
     def _post_antes_and_blinds(self) -> None:
         if self.ante:
             for i in range(self.n):
-                amt = min(self.ante, self.stack_left[i])
-                self.contrib[i] += amt
-                self.stack_left[i] -= amt
-                if self.stack_left[i] == 0:
-                    self.allin[i] = True
+                self._post_ante(i, self.ante)
+        if self.bb_ante:
+            # one ante for the table, paid by the big blind, posted before the
+            # blinds (it is dead money, not part of the BB's live blind)
+            self._post_ante(self._bb_seat(), self.bb_ante)
         self._commit(self._sb_seat(), self.sb)
         self._commit(self._bb_seat(), self.bb)
 
