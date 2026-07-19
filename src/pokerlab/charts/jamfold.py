@@ -22,6 +22,8 @@ Public API (consumed by Slice E drills):
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -94,6 +96,53 @@ def chip_model(depth_bb: float, ante: float, E: np.ndarray) -> JamFoldModel:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Input validation for the public chart entry points (round-2 findings
+# [E34][E35][E36]). These solves are answer keys for live drills and for HH
+# grading, so a degenerate input must fail loudly rather than converge to a
+# confident-looking chart: an empty prize ladder makes every ICM delta zero and
+# yields a uniform 50/50 chart whose Nash gap is a genuine 0.0 (it IS an
+# equilibrium of a game where nothing matters), and a non-positive depth flips
+# the showdown term's sign and converges to the MIRROR of the correct chart —
+# folding aces and jamming 32o — with no warning at all.
+# --------------------------------------------------------------------------- #
+def _validate_depth(depth_bb: float) -> None:
+    if not math.isfinite(depth_bb) or depth_bb <= 0.0:
+        raise ValueError(
+            f"depth_bb must be finite and positive, got {depth_bb!r} — a "
+            "non-positive depth inverts the chart rather than failing")
+
+
+def _validate_payouts(payouts: Sequence[float]) -> None:
+    if not len(payouts):
+        raise ValueError("ICM needs a non-empty prize ladder")
+    vals = [float(p) for p in payouts]
+    if not all(math.isfinite(p) and p >= 0.0 for p in vals):
+        raise ValueError(f"payouts must be finite and non-negative, got {vals!r}")
+    if sum(vals) <= 0.0:
+        raise ValueError(
+            "prize ladder sums to zero — every ICM delta would be 0 and the "
+            "solve would report a meaningless exploitability of 0.0")
+    if any(b > a for a, b in zip(vals, vals[1:])):
+        raise ValueError(f"payouts must be descending, got {vals!r}")
+
+
+def _validate_icm_inputs(stacks: Sequence[float], sb_seat: int, bb_seat: int,
+                         payouts: Sequence[float], bb_chips: int) -> None:
+    _validate_payouts(payouts)
+    n = len(stacks)
+    if n < 2:
+        raise ValueError(f"ICM push/fold needs at least 2 seats, got {n}")
+    if not (0 <= sb_seat < n and 0 <= bb_seat < n):
+        raise ValueError(f"seat index out of range: sb={sb_seat} bb={bb_seat} n={n}")
+    if sb_seat == bb_seat:
+        raise ValueError(f"sb_seat and bb_seat must differ (both {sb_seat})")
+    if not all(math.isfinite(s) and s >= 0.0 for s in stacks):
+        raise ValueError(f"stacks must be finite and non-negative, got {list(stacks)!r}")
+    if not (math.isfinite(bb_chips) and bb_chips > 0):
+        raise ValueError(f"bb_chips must be finite and positive, got {bb_chips!r}")
+
+
 def icm_model(
     stacks_chips: list[int],
     sb_seat: int,
@@ -111,10 +160,17 @@ def icm_model(
     tightens ranges near the bubble.
     """
     stacks = [float(x) for x in stacks_chips]
+    _validate_icm_inputs(stacks, sb_seat, bb_seat, payouts, bb_chips)
     base = icm_equities(stacks, payouts)
     eff = min(stacks[sb_seat], stacks[bb_seat])  # matched all-in size (chips)
     a_ch = ante * bb_chips
     sb_blind = 0.5 * bb_chips
+    # A seat cannot post more than it has: short of a full blind it is simply
+    # all-in for its stack. Charging the nominal blind regardless drove stacks
+    # negative and produced negative ICM equity (round-2 finding [E36]) — the
+    # forced all-in IS the honest game here, so clamp rather than reject.
+    sb_post = min(sb_blind + a_ch, stacks[sb_seat])
+    bb_post = min(bb_chips + a_ch, stacks[bb_seat])
 
     def delta(sb_delta: float, bb_delta: float) -> tuple[float, float]:
         v = list(stacks)
@@ -123,8 +179,8 @@ def icm_model(
         eq = icm_equities(v, payouts)
         return eq[sb_seat] - base[sb_seat], eq[bb_seat] - base[bb_seat]
 
-    sbfold = delta(-(sb_blind + a_ch), sb_blind + a_ch)
-    bbfold = delta(bb_chips + a_ch, -(bb_chips + a_ch))
+    sbfold = delta(-sb_post, sb_post)
+    bbfold = delta(bb_post, -bb_post)
     win = delta(eff, -eff)     # SB wins the all-in
     lose = delta(-eff, eff)    # SB loses the all-in
 
@@ -252,6 +308,7 @@ def model_exploitability(model: JamFoldModel, P: np.ndarray,
 def solve_jamfold(depth_bb: float, ante: float = 0.0,
                   iters: int = 1500) -> JamFoldSolution:
     """Solve the chip-EV HU push/fold game at a given depth (cached)."""
+    _validate_depth(depth_bb)
     em = load_equity_matrix()
     E = em.equity_matrix
     P = joint_prior()
@@ -292,8 +349,15 @@ def solve_jamfold_icm(
     # per-player best-response gap is still exactly the Nash gap, and it is what
     # has to be small for these ranges to serve as answer keys for the LIVE M2
     # bubble drills. Reporting NaN left the solve unverified (finding [20]).
-    # Units are ICM $ (the model's payoff unit), not bb.
-    expl = model_exploitability(model, P, x, y, w)
+    #
+    # Reported as a FRACTION OF THE PRIZE POOL, not raw ICM $ (round-2 finding
+    # [E37]): the raw gap carries the ladder's units, so a fixed threshold on it
+    # is really a threshold on how large the payouts happen to be. The checked-in
+    # $5/$3/$2 fixture passed a <1e-4 bar at 2.6e-5 while the identical solve on
+    # a realistic cents ladder measured 2.6e-3 and failed it. Dividing by the
+    # pool makes the number dimensionless and the guard scale-invariant.
+    pool = float(sum(payouts))
+    expl = model_exploitability(model, P, x, y, w) / pool
     return JamFoldSolution(
         depth_bb=float(depth), ante=float(ante), model_name="icm",
         sb_jam=x, bb_call=y, sb_jam_ev=np.zeros(N), sb_fold_ev=model.sbfold_sb,

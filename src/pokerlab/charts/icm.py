@@ -27,6 +27,11 @@ def icm_equities(stacks: Sequence[float], payouts: Sequence[float]) -> list[floa
     """
     stacks = [float(s) for s in stacks]
     n = len(stacks)
+    # A negative stack is never a legal tournament state; it means a caller
+    # subtracted a blind/ante a seat could not actually pay. Left unguarded the
+    # recursion happily returns negative $ equity (round-2 finding [E36]), which
+    # is nonsense that then propagates silently into an answer key.
+    assert all(s >= 0.0 for s in stacks), f"negative stack in ICM input: {stacks}"
     # Can't pay more places than there are players.
     payouts = [float(p) for p in payouts[:n]]
 

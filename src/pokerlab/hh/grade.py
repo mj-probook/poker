@@ -51,7 +51,12 @@ class Grading:
 
 def _jamfold_position(d: Decision) -> str | None:
     """'SB' / 'BB' if this is a chart-modelled push/fold spot, else None."""
-    if d.street != "preflop" or d.eff_bb > JAMFOLD_MAX_BB or d.num_in_pot != 2:
+    # NaN-safe bounds check (round-2 finding [E35]): `nan > 20.0` is False, so a
+    # non-finite eff_bb used to sail through this gate into the chart solver.
+    # Stating the admissible window positively rejects NaN as well as inf.
+    if not (0.0 < d.eff_bb <= JAMFOLD_MAX_BB):
+        return None
+    if d.street != "preflop" or d.num_in_pot != 2:
         return None
     if d.position == "SB" and not d.opp_allin:
         return "SB"   # folded to SB, unopened vs BB
