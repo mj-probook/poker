@@ -52,9 +52,15 @@ def test_wrong_answer_resets_reps_and_lowers_easiness():
     before_ef = st.easiness
     st = sch.review(st, False, NOW)               # lapse
     assert st.reps == 0
-    assert st.interval_days == 1.0
     assert st.easiness < before_ef
-    assert _due_after(st, 1)
+    # The reset interval governs the NEXT session...
+    assert st.interval_days == 1.0
+    # ...but SM-2 repeats a lapsed item within the SAME session, so it is due
+    # immediately. This assertion used to read `_due_after(st, 1)`, which is the
+    # behaviour that let a just-detected leak sit undrillable for a day behind
+    # never-practised categories (round-2 finding [E51]).
+    assert _due_after(st, 0)
+    assert sch._is_due(st, NOW) is True
 
 
 def test_easiness_never_below_floor():
@@ -205,3 +211,30 @@ def test_unparseable_due_is_treated_as_overdue_not_a_crash():
     bad = sch.SRState("k", 2.5, 0.0, 0, "not-a-timestamp")
     assert sch._is_due(bad, NOW) is True
     assert sch.next_due([bad])[0].leak_key == "k"
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 finding [E51]: E42 taught select_next about never-drilled categories,
+# which exposed a latent SM-2 infidelity -- a lapse was stamped `now + 1 day`,
+# so a leak detected in a hand history and registered RIGHT NOW was not due
+# until tomorrow and lost to every unseen category. That silently broke the
+# plan-§5.3 "resurface the worst categories" promise, which is the M4->M2 seam.
+# --------------------------------------------------------------------------- #
+def test_a_just_registered_leak_outranks_never_drilled_categories():
+    conn = db.connect(":memory:")
+    top = "SBjam|preflop|jam|10"
+    others = ["BBcall.icm|preflop|call|10", "SBjam|preflop|jam|5", top]
+    sch.schedule_attempt(conn, top, correct=False, now=NOW)   # the HH leak
+    assert sch.select_next(conn, NOW, categories=others) == top
+
+
+def test_a_lapse_stays_due_until_it_is_answered_correctly():
+    """SM-2 repeats a failed item until quality recovers, then schedules out."""
+    conn = db.connect(":memory:")
+    key = "SBjam|preflop|jam|10"
+    cats = [key, "SBjam|preflop|jam|5"]
+    for _ in range(3):                       # keep failing -> keeps resurfacing
+        sch.schedule_attempt(conn, key, correct=False, now=NOW)
+        assert sch.select_next(conn, NOW, categories=cats) == key
+    sch.schedule_attempt(conn, key, correct=True, now=NOW)    # finally correct
+    assert sch.select_next(conn, NOW, categories=cats) != key  # yields the floor

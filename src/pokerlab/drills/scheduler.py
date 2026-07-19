@@ -73,12 +73,21 @@ def _due_iso(now: datetime, interval_days: float) -> str:
 
 
 def review(state: SRState, correct: bool, now: datetime) -> SRState:
-    """Apply one SM-2 review to `state` (pure)."""
+    """Apply one SM-2 review to `state` (pure).
+
+    A lapse is due again IMMEDIATELY. SM-2 specifies that a quality < 3 response
+    restarts the item "from the beginning" and repeats it within the *same*
+    session until it is answered well; the reset interval governs the next
+    session, not this one. Stamping a lapse `now + 1 day` skipped that
+    same-session repeat entirely, which is what let a just-detected leak sit
+    undrillable behind never-practised categories (round-2 finding [E51]).
+    """
     quality = Q_CORRECT if correct else Q_WRONG
     easiness = _update_easiness(state.easiness, quality)
     if not correct:                       # quality < 3 -> lapse, restart
         reps = 0
-        interval = 1.0
+        interval = 1.0                    # applies to the NEXT session
+        due_in = 0.0                      # ...but drill it again right now
     else:
         reps = state.reps + 1
         if reps == 1:
@@ -87,7 +96,8 @@ def review(state: SRState, correct: bool, now: datetime) -> SRState:
             interval = 6.0
         else:
             interval = _clamp_interval(round(state.interval_days * easiness, 4))
-    return SRState(state.leak_key, easiness, interval, reps, _due_iso(now, interval))
+        due_in = interval
+    return SRState(state.leak_key, easiness, interval, reps, _due_iso(now, due_in))
 
 
 def next_due(states: list[SRState]) -> list[SRState]:
