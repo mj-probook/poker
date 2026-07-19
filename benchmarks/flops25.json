@@ -1,0 +1,268 @@
+{
+  "meta": {
+    "formation": "BTNopen_BBcall",
+    "stack_bb": 40.0,
+    "open_to_bb": 2.5,
+    "pot_bb": 5.0,
+    "eff_stack_bb": 37.5,
+    "bet_grid": [
+      0.33,
+      0.75,
+      1.25,
+      "jam"
+    ],
+    "generated_by": "scripts/gen_flops25.py",
+    "note": "Ranges are fixture constants (self-authored 40bb BTNvsBB SRP), not solver output and not vendor-derived. See module docstring for the exact construction rule."
+  },
+  "ranges": {
+    "BTN": [
+      "22",
+      "33",
+      "44",
+      "54s",
+      "55",
+      "64s",
+      "65s",
+      "66",
+      "75s",
+      "76s",
+      "77",
+      "86s",
+      "87s",
+      "88",
+      "97s",
+      "98s",
+      "99",
+      "A2s",
+      "A3s",
+      "A4s",
+      "A5s",
+      "A6s",
+      "A7s",
+      "A8s",
+      "A9o",
+      "A9s",
+      "AA",
+      "AJo",
+      "AJs",
+      "AKo",
+      "AKs",
+      "AQo",
+      "AQs",
+      "ATo",
+      "ATs",
+      "J7s",
+      "J8s",
+      "J9s",
+      "JJ",
+      "JTo",
+      "JTs",
+      "K4s",
+      "K5s",
+      "K6s",
+      "K7s",
+      "K8s",
+      "K9s",
+      "KJo",
+      "KJs",
+      "KK",
+      "KQo",
+      "KQs",
+      "KTo",
+      "KTs",
+      "Q6s",
+      "Q7s",
+      "Q8s",
+      "Q9s",
+      "QJo",
+      "QJs",
+      "QQ",
+      "QTo",
+      "QTs",
+      "T7s",
+      "T8s",
+      "T9s",
+      "TT"
+    ],
+    "BB": [
+      "22",
+      "33",
+      "44",
+      "54s",
+      "55",
+      "65s",
+      "66",
+      "76s",
+      "77",
+      "87s",
+      "88",
+      "98s",
+      "99",
+      "A2s",
+      "A3s",
+      "A4s",
+      "A5s",
+      "A6s",
+      "A7s",
+      "A8s",
+      "A9s",
+      "AJo",
+      "AJs",
+      "AQo",
+      "ATo",
+      "ATs",
+      "J8s",
+      "J9s",
+      "JJ",
+      "JTo",
+      "JTs",
+      "K5s",
+      "K6s",
+      "K7s",
+      "K8s",
+      "K9s",
+      "KJo",
+      "KJs",
+      "KQo",
+      "KQs",
+      "KTs",
+      "Q7s",
+      "Q8s",
+      "Q9s",
+      "QJo",
+      "QJs",
+      "QQ",
+      "QTs",
+      "T8s",
+      "T9s",
+      "TT"
+    ]
+  },
+  "flops": [
+    {
+      "cards": "2c3c4c",
+      "iso_class": "2c3c4c",
+      "texture": "mono_conn"
+    },
+    {
+      "cards": "6c7cTc",
+      "iso_class": "6c7cTc",
+      "texture": "mono_conn"
+    },
+    {
+      "cards": "QcKcAc",
+      "iso_class": "QcKcAc",
+      "texture": "mono_conn"
+    },
+    {
+      "cards": "2c3c7c",
+      "iso_class": "2c3c7c",
+      "texture": "mono_dry"
+    },
+    {
+      "cards": "4c6cTc",
+      "iso_class": "4c6cTc",
+      "texture": "mono_dry"
+    },
+    {
+      "cards": "9cKcAc",
+      "iso_class": "9cKcAc",
+      "texture": "mono_dry"
+    },
+    {
+      "cards": "2c3c4d",
+      "iso_class": "2c3c4d",
+      "texture": "twotone_conn"
+    },
+    {
+      "cards": "6c7d9d",
+      "iso_class": "6c7d9d",
+      "texture": "twotone_conn"
+    },
+    {
+      "cards": "QcKdAd",
+      "iso_class": "QcKdAd",
+      "texture": "twotone_conn"
+    },
+    {
+      "cards": "2c3c7d",
+      "iso_class": "2c3c7d",
+      "texture": "twotone_dry"
+    },
+    {
+      "cards": "4c6cAd",
+      "iso_class": "4c6cAd",
+      "texture": "twotone_dry"
+    },
+    {
+      "cards": "9cKdAd",
+      "iso_class": "9cKdAd",
+      "texture": "twotone_dry"
+    },
+    {
+      "cards": "2c3d4h",
+      "iso_class": "2c3d4h",
+      "texture": "rainbow_conn"
+    },
+    {
+      "cards": "6c7dTh",
+      "iso_class": "6c7dTh",
+      "texture": "rainbow_conn"
+    },
+    {
+      "cards": "QcKdAh",
+      "iso_class": "QcKdAh",
+      "texture": "rainbow_conn"
+    },
+    {
+      "cards": "2c3d7h",
+      "iso_class": "2c3d7h",
+      "texture": "rainbow_dry"
+    },
+    {
+      "cards": "4c6dTh",
+      "iso_class": "4c6dTh",
+      "texture": "rainbow_dry"
+    },
+    {
+      "cards": "9cKdAh",
+      "iso_class": "9cKdAh",
+      "texture": "rainbow_dry"
+    },
+    {
+      "cards": "2c2d3c",
+      "iso_class": "2c2d3c",
+      "texture": "paired_twotone"
+    },
+    {
+      "cards": "5c9c9d",
+      "iso_class": "5c9c9d",
+      "texture": "paired_twotone"
+    },
+    {
+      "cards": "KcAcAd",
+      "iso_class": "KcAcAd",
+      "texture": "paired_twotone"
+    },
+    {
+      "cards": "2c2d2h",
+      "iso_class": "2c2d2h",
+      "texture": "paired_rainbow"
+    },
+    {
+      "cards": "5cJdJh",
+      "iso_class": "5cJdJh",
+      "texture": "paired_rainbow"
+    },
+    {
+      "cards": "AcAdAh",
+      "iso_class": "AcAdAh",
+      "texture": "paired_rainbow"
+    },
+    {
+      "cards": "9cKdAc",
+      "iso_class": "9cKdAc",
+      "texture": "twotone_dry"
+    }
+  ]
+}
