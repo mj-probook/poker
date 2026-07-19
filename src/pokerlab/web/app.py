@@ -1,0 +1,129 @@
+"""FastAPI drill loop (Slice E; plan §3 "UI pinned for M2": functional only).
+
+Two JSON routes wire the browser to the drill engine — the whole UI↔engine
+contract from plan §3 (`next_spot() -> Spot`, `submit_action() -> Score`):
+
+    GET  /api/drill/next            -> Spot   (scheduler picks the category)
+    POST /api/drill/answer          -> Score  (persist attempt + advance SM-2)
+
+Answers are scored by the decision-ε rule, persisted to `drill_attempts`, and
+fed to the SM-2 scheduler so the next spot resurfaces the worst leak category.
+Everything is local, single-user, no auth, no build step (plan non-goals).
+"""
+
+from __future__ import annotations
+
+import os
+import random
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from pokerlab.drills import generator as gen
+from pokerlab.drills import scheduler as sch
+from pokerlab.drills.scoring import score
+from pokerlab.store import db
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+class Answer(BaseModel):
+    drill_id: str
+    action: str
+
+
+def _spot_json(drill: gen.Drill) -> dict:
+    tc = drill.tournament
+    return {
+        "drill_id": drill.drill_id,
+        "kind": drill.kind,
+        "position": drill.position,
+        "depth_bb": drill.depth_bb,
+        "hand": drill.hand_label,
+        "description": drill.description,
+        "legal_actions": list(drill.legal_actions),
+        "pot_bb": drill.pot_bb,
+        "tournament": None if tc is None else {
+            "players_remaining": tc.players_remaining,
+            "payouts": list(tc.payouts),
+            "stacks_all": list(tc.stacks_all),
+            "bb": tc.bb,
+            "ante": tc.ante,
+        },
+    }
+
+
+def _explain(result, action: str) -> str:
+    verdict = "Correct" if result.correct else "Incorrect"
+    return (f"{verdict}. Chart plays {result.best_action} here — you chose "
+            f"{action} (freq {result.chosen_frequency:.0%}, "
+            f"EV loss {result.ev_loss_bb:.2f}bb).")
+
+
+def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
+    app = FastAPI(title="pokerlab drills")
+    population = gen.default_population()
+    by_id = {d.drill_id: d for d in population}
+    by_cat: dict[str, list[gen.Drill]] = {}
+    for d in population:
+        by_cat.setdefault(d.spot_key, []).append(d)
+    default_cat = population[0].spot_key
+
+    conn = db.connect(db_path, check_same_thread=False)
+    lock = threading.Lock()
+    rng = random.Random(seed)
+
+    @app.get("/api/drill/next")
+    def next_drill() -> dict:
+        with lock:
+            now = datetime.now(timezone.utc)
+            cat = sch.select_next(conn, now) or default_cat
+            pool = by_cat.get(cat) or population
+            return _spot_json(rng.choice(pool))
+
+    @app.post("/api/drill/answer")
+    def answer(ans: Answer) -> dict:
+        with lock:
+            drill = by_id.get(ans.drill_id)
+            if drill is None:
+                raise HTTPException(404, f"unknown drill_id {ans.drill_id!r}")
+            try:
+                result = score(drill.solution, ans.action, drill.pot_bb)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            now = datetime.now(timezone.utc)
+            db.insert_drill_attempt(conn, drill.spot_key, drill.kind, ans.action,
+                                    result.correct, result.ev_loss_bb,
+                                    now.isoformat())
+            sch.schedule_attempt(conn, drill.spot_key, result.correct, now)
+            return {
+                "drill_id": drill.drill_id,
+                "correct": result.correct,
+                "ev_loss_bb": result.ev_loss_bb,
+                "best_action": result.best_action,
+                "chosen_frequency": result.chosen_frequency,
+                "explanation": _explain(result, ans.action),
+            }
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    app.state.conn = conn
+    app.state.population = population
+    return app
+
+
+def main() -> None:  # pragma: no cover - convenience runner (pokerlab-web)
+    import uvicorn
+
+    app = create_app(db_path=os.environ.get("POKERLAB_DB", "pokerlab.db"))
+    uvicorn.run(app, host=os.environ.get("POKERLAB_HOST", "127.0.0.1"),
+                port=int(os.environ.get("POKERLAB_PORT", "8000")))
