@@ -83,12 +83,14 @@ def random_action(hand: Hand, rng: random.Random) -> Action:
     return acts[0]
 
 
-def play_engine(setup: HandSetup, seed: int) -> Hand:
-    """Play a full hand through our engine with the random policy."""
+def play_engine(setup: HandSetup, seed: int, action_fn=random_action) -> Hand:
+    """Play a full hand through our engine. ``action_fn(hand, rng) -> Action``
+    defaults to the random legal policy; Slice H passes a discrete-encoding
+    policy to run the identical differential through the vectorized-env path."""
     rng = random.Random(seed ^ 0x5DEECE66D)
     hand = Hand(setup)
     while not hand.is_terminal():
-        hand.apply(random_action(hand, rng))
+        hand.apply(action_fn(hand, rng))
     return hand
 
 
@@ -166,7 +168,7 @@ def _is_odd_chip_only(hand: Hand, mine: list[int], theirs: list[int]) -> bool:
     return all(net == 0 for net in grouped.values())
 
 
-def check_hand(seed: int) -> tuple[str, str]:
+def check_hand(seed: int, action_fn=random_action) -> tuple[str, str]:
     """Play + compare one seeded hand.
 
     Returns (status, detail): status is "exact" (stacks identical), "oddchip"
@@ -174,7 +176,7 @@ def check_hand(seed: int) -> tuple[str, str]:
     "mismatch" (a real discrepancy — an engine bug).
     """
     setup = random_setup(seed)
-    hand = play_engine(setup, seed)
+    hand = play_engine(setup, seed, action_fn)
     mine = hand.final_stacks()
     theirs = pokerkit_final_stacks(setup, hand.action_history)
     if mine == theirs:
@@ -190,7 +192,7 @@ def check_hand(seed: int) -> tuple[str, str]:
     return status, detail
 
 
-def scan_chunk(bounds: tuple[int, int]) -> tuple[int, int, list[str]]:
+def scan_chunk(bounds: tuple[int, int], action_fn=random_action) -> tuple[int, int, list[str]]:
     """Worker: classify a [lo, hi) seed range -> (exact, oddchip, mismatches)."""
     import warnings
 
@@ -199,7 +201,7 @@ def scan_chunk(bounds: tuple[int, int]) -> tuple[int, int, list[str]]:
     exact = odd = 0
     mismatches: list[str] = []
     for seed in range(lo, hi):
-        status, detail = check_hand(seed)
+        status, detail = check_hand(seed, action_fn)
         if status == "exact":
             exact += 1
         elif status == "oddchip":
@@ -210,18 +212,25 @@ def scan_chunk(bounds: tuple[int, int]) -> tuple[int, int, list[str]]:
 
 
 def run_differential(
-    n: int, start: int = 0, workers: int | None = None, chunk: int = 400
+    n: int, start: int = 0, workers: int | None = None, chunk: int = 400,
+    action_fn=random_action,
 ) -> tuple[int, int, list[str]]:
-    """Run the PokerKit differential over ``n`` seeded hands across processes."""
+    """Run the PokerKit differential over ``n`` seeded hands across processes.
+
+    ``action_fn`` (a module-level, picklable policy) lets callers drive the same
+    oracle through a different code path — Slice H reuses this with a discrete
+    env-encoding policy for the SingleEnvAdapter exit."""
     import concurrent.futures as cf
+    import functools
     import os
 
     workers = workers or max(1, (os.cpu_count() or 2) - 2)
     bounds = [(s, min(s + chunk, start + n)) for s in range(start, start + n, chunk)]
     exact = odd = 0
     mismatches: list[str] = []
+    worker = functools.partial(scan_chunk, action_fn=action_fn)
     with cf.ProcessPoolExecutor(max_workers=workers) as pool:
-        for e, o, m in pool.map(scan_chunk, bounds):
+        for e, o, m in pool.map(worker, bounds):
             exact += e
             odd += o
             mismatches.extend(m)
