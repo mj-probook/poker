@@ -26,7 +26,10 @@ from pokerlab.hh.report import SessionReport
 from pokerlab.store import db
 from pokerlab.types import Solution, TIER_SOLVER
 
-Solver = Callable[[str], Solution | None]
+# The drain solver receives the queued spot_key AND the re-derived decision, so
+# a real solver can build the correct subgame (board/pot/stack) and pick the
+# hero's hand class; a stub can ignore both. Returns None on a solve miss.
+Solver = Callable[[str, Decision], Solution | None]
 
 _PARSERS = {
     "PokerStars": pokerstars.parse_pokerstars,
@@ -88,14 +91,14 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
     done = failed = 0
     for row in db.pending_batch(conn):
         db.set_batch_status(conn, row["id"], "running")
-        solution = solver(row["spot_key"])
+        hand = db.get_imported_hand(conn, row["hand_id"])
+        parsed = parse_by_site(hand["site"], hand["raw"])
+        d = extract_decisions(parsed)[row["decision_idx"]]
+        solution = solver(row["spot_key"], d)
         if solution is None:
             db.set_batch_status(conn, row["id"], "failed")
             failed += 1
             continue
-        hand = db.get_imported_hand(conn, row["hand_id"])
-        parsed = parse_by_site(hand["site"], hand["raw"])
-        d = extract_decisions(parsed)[row["decision_idx"]]
         g = grade_tier2(d, solution)
         db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
                           g.best or "", g.ev_loss, g.leak_key, graded_at)

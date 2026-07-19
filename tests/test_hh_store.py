@@ -67,7 +67,7 @@ def test_tier3_rows_persist_with_null_ev_loss() -> None:
 def test_batch_worker_drains_queue_and_grades_tier2() -> None:
     conn, _report, counts = _persisted_session()
 
-    def solver(spot_key: str) -> Solution:
+    def solver(spot_key: str, decision) -> Solution:
         return _STUB_SOLUTION  # always a hit
 
     result = drain_batch_queue(conn, solver, graded_at=AT)
@@ -81,14 +81,14 @@ def test_batch_worker_drains_queue_and_grades_tier2() -> None:
 
 def test_solver_miss_marks_row_failed() -> None:
     conn, _report, counts = _persisted_session()
-    result = drain_batch_queue(conn, lambda spot: None, graded_at=AT)
+    result = drain_batch_queue(conn, lambda spot, d: None, graded_at=AT)
     assert result["failed"] == counts["queued"] and result["done"] == 0
     assert all(r["status"] == "failed" for r in db.batch_rows(conn))
 
 
 def test_leak_report_ranks_tiers_1_2_and_lists_tier3_separately() -> None:
     conn, _report, _counts = _persisted_session()
-    drain_batch_queue(conn, lambda spot: _STUB_SOLUTION, graded_at=AT)
+    drain_batch_queue(conn, lambda spot, d: _STUB_SOLUTION, graded_at=AT)
 
     leaks = hh_leak_report(conn, limit=5)
     assert leaks, "expected ranked leaks"

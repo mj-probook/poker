@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import dataclasses
+
 from pokerlab.engine.cards import card_rank, card_suit
 from pokerlab.engine.state import Hand
 from pokerlab.hh.model import ParsedHand
 from pokerlab.hh.tiers import route_tier
-from pokerlab.types import Action, STREETS
+from pokerlab.types import Action, GameState, STREETS, TournamentContext
 
 _RANK_CHAR = {14: "A", 13: "K", 12: "Q", 11: "J", 10: "T",
               9: "9", 8: "8", 7: "7", 6: "6", 5: "5", 4: "4", 3: "3", 2: "2"}
@@ -69,6 +71,10 @@ class Decision:
     tier: int
     formation: str
     action_type: str
+    # Frozen GameState snapshot at the decision (tournament context attached),
+    # so downstream (tier-2 solver / SpotKey) is self-contained. Optional so a
+    # Decision can still be hand-built in tests without a full engine state.
+    game_state: GameState | None = None
     # The persisted leak_key is the canonical category (drills.categories),
     # assigned by the grader — jam/fold spots gain a depth bucket, so it is not
     # a pure function of these raw fields (see hh.grade).
@@ -88,6 +94,13 @@ def extract_decisions(parsed: ParsedHand) -> list[Decision]:
     n = hand.n
     bb = parsed.setup.bb
     hero = parsed.hero
+    tc = TournamentContext(
+        payouts=(0,),
+        players_remaining=n,
+        stacks_all=tuple(parsed.setup.stacks),
+        bb=bb,
+        ante=parsed.setup.ante,
+    )
     out: list[Decision] = []
     k = 0
     for seat, action in parsed.actions:
@@ -126,6 +139,7 @@ def extract_decisions(parsed: ParsedHand) -> list[Decision]:
                 tier=route_tier(street, num_in_pot),
                 formation=f"{n}max:{position_label(n, hand.button, hero)}",
                 action_type=atype,
+                game_state=dataclasses.replace(hand.game_state, tournament=tc),
             ))
             k += 1
         hand.apply(action)
