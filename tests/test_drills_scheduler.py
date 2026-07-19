@@ -109,3 +109,35 @@ def test_select_next_falls_back_to_soonest_when_nothing_due():
     db.upsert_sr_state(conn, "a", 2.5, 6.0, 2, (NOW + timedelta(days=6)).isoformat())
     db.upsert_sr_state(conn, "b", 2.5, 1.0, 1, (NOW + timedelta(days=2)).isoformat())
     assert sch.select_next(conn, NOW) == "b"     # nothing due -> soonest
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [16]: _is_due compared a stored ISO timestamp against `now`
+# without normalizing tz-awareness, so a naive stored due vs an aware now (or
+# vice versa) raised TypeError instead of answering the question.
+# --------------------------------------------------------------------------- #
+def test_is_due_handles_mixed_timezone_awareness():
+    from datetime import timezone
+
+    from pokerlab.drills.scheduler import SRState, _is_due
+
+    naive_due = SRState("k", 2.5, 0.0, 0, "2026-07-19T00:00:00")
+    aware_due = SRState("k", 2.5, 0.0, 0, "2026-07-19T00:00:00+00:00")
+    aware_now = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    naive_now = datetime(2026, 7, 20)
+
+    # all four combinations must answer, not raise
+    assert _is_due(naive_due, aware_now) is True
+    assert _is_due(aware_due, naive_now) is True
+    assert _is_due(naive_due, naive_now) is True
+    assert _is_due(aware_due, aware_now) is True
+
+
+def test_is_due_is_false_before_the_due_date_across_awareness():
+    from datetime import timezone
+
+    from pokerlab.drills.scheduler import SRState, _is_due
+
+    naive_due = SRState("k", 2.5, 0.0, 0, "2026-07-21T00:00:00")
+    aware_now = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    assert _is_due(naive_due, aware_now) is False

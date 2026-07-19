@@ -21,9 +21,14 @@ CREATE TABLE IF NOT EXISTS gradings(
   decision_idx INTEGER NOT NULL,
   tier INTEGER NOT NULL CHECK (tier IN (1, 2, 3)),
   chosen TEXT NOT NULL,
-  best TEXT NOT NULL,
+  best TEXT NOT NULL,                 -- '' when the tier has no single best action
+                                      -- (tier 3 never names one) — see hh/persist.py
   ev_loss REAL,                       -- NULL iff tier = 3 (enforced in code + trigger)
-  leak_key TEXT NOT NULL,             -- formation|street|action_type
+  -- Canonical 4-part category key owned by drills/categories.py:
+  --   formation|street|action|depth
+  -- depth is a snapped bucket (5/8/10/15/20) for preflop jam/fold and '-' for
+  -- postflop; formation takes a '.icm' suffix for ICM variants.
+  leak_key TEXT NOT NULL,
   graded_at TEXT NOT NULL
 );
 
@@ -62,6 +67,10 @@ CREATE TABLE IF NOT EXISTS solution_index(
 
 CREATE TABLE IF NOT EXISTS batch_queue(
   id INTEGER PRIMARY KEY,
+  -- Coarse queue label `formation|street` (hh/persist.py:spot_key) — NOT a
+  -- types.SpotKey, which also carries stack and board buckets. It is handed to
+  -- the drain solver alongside the re-derived decision, which is what actually
+  -- carries the board/pot/stack, so the label only has to group the backlog.
   spot_key TEXT NOT NULL,
   hand_id INTEGER NOT NULL,
   decision_idx INTEGER NOT NULL,

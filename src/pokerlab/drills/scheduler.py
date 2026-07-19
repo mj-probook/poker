@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from pokerlab.store import db, views
 
@@ -66,8 +66,18 @@ def next_due(states: list[SRState]) -> list[SRState]:
     return sorted(states, key=lambda s: s.due)
 
 
+def _as_utc(ts: datetime) -> datetime:
+    """Normalize to aware UTC; naive timestamps are read as UTC.
+
+    Stored due dates and the caller's `now` can differ in tz-awareness (the
+    table holds whatever isoformat produced), and comparing a naive to an aware
+    datetime raises TypeError rather than answering (round-1 finding [16]).
+    """
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+
+
 def _is_due(state: SRState, now: datetime) -> bool:
-    return datetime.fromisoformat(state.due) <= now
+    return _as_utc(datetime.fromisoformat(state.due)) <= _as_utc(now)
 
 
 # --------------------------------------------------------------------------- #

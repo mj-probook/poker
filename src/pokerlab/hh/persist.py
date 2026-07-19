@@ -38,7 +38,13 @@ _PARSERS = {
 
 
 def spot_key(d: Decision) -> str:
-    """Solve-spot identifier for the tier-2 library / batch queue (action-free)."""
+    """Coarse queue label for the tier-2 backlog: `formation|street`.
+
+    Deliberately NOT a `types.SpotKey` (which also carries stack and board
+    buckets): the drain hands the solver this label *and* the re-derived
+    decision, and the decision is what carries board/pot/stack. The label only
+    has to group the backlog, so it stays cheap to compute pre-solve.
+    """
     return f"{d.formation}|{d.street}"
 
 
@@ -88,6 +94,9 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
             g = gd.grading
             if g.graded:
                 db.insert_grading(conn, hid, g.decision_index, g.tier, g.chosen,
+                                  # '' is the no-single-best sentinel: tier 3
+                                  # never names a best action (schema: best TEXT
+                                  # NOT NULL), and neither does an ungraded spot
                                   g.best or "", g.ev_loss, g.leak_key, graded_at,
                                   commit=False)
                 n_graded += 1
@@ -135,6 +144,7 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             continue
         g = grade_tier2(d, solution)
         db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
+                          # '' = no single best action (see persist_session)
                           g.best or "", g.ev_loss, g.leak_key, graded_at)
         db.set_batch_status(conn, row["id"], "done")
         done += 1
