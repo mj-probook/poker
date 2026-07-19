@@ -83,8 +83,10 @@ def test_m3_accuracy_bar_on_a_fixture_flop_with_the_pinned_grid():
     flop and so the one that fits a fast-suite budget.
 
     400 CFR+ iterations reach 0.36% of pot (~3s). The solver is deterministic
-    (no RNG), so that number is reproducible rather than merely typical. Full
-    25-flop coverage stays behind `make bench`.
+    (no RNG), so that number is reproducible rather than merely typical.
+    `make bench` extends this to 5 fixture flops but at a REDUCED grid
+    (0.75 pot, no jam); the pinned-grid bar over all 25 flops is deferred
+    behind the Rust hot-loop port (PLAN §8 M3).
     """
     from pokerlab.engine.cards import card_from_str
     from pokerlab.solver import subgame as sg
