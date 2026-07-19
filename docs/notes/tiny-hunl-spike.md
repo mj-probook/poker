@@ -93,11 +93,20 @@ solve is **3.53 bb** exploitable, ~18× the oracle and ~4.7× the bar.
 **What the re-run changed, honestly.** The previously recorded rationale claimed
 the 6.5 bb gap was "a data/accuracy result, not a mechanism bug". That claim was
 false when it was written — there *was* a mechanism bug (the leaf units), and it
-inflated the number by ~1.8×. With the bug fixed, the claim now actually holds:
-the remaining 3.53 bb is attributable to net accuracy, since the leaf is
-verified to enter CFR on the right scale and an oracle leaf reproduces the exact
-solve. The verdict is unchanged, but it is now supported by the evidence rather
-than in spite of it.
+inflated the number by ~1.8×. The verdict is unchanged, but it is now measured
+on a leaf that is verified to enter CFR on the right scale, with an oracle leaf
+shown to reproduce the exact solve.
+
+**Known remaining harness defect (not yet fixed).** The leaf still passes the
+subgame's *root* pot as the net's pot feature, but a river-entry leaf sits at
+whatever the turn betting built — on this tree 8, 16, 24 or 48 bb. So on every
+line involving turn betting the net is queried off its training distribution
+(it was trained on river subgames labelled with their own pot). That means the
+remaining 3.53 bb is **not** yet cleanly attributable to net accuracy alone;
+some unknown share is this feature mismatch. Fixing it needs the node's pot
+threaded through the leaf callback. It cannot rescue the verdict — the gap
+would have to close ~4.7× — but the *rationale* should not claim more than the
+evidence supports until it is fixed.
 
 This is the *expected* L4 outcome and mirrors Slice G's Leduc finding: a value
 net drives a depth-limited solver only as well as its CFV accuracy allows, and
