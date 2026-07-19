@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pokerlab.charts.jamfold import jamfold_range
-from pokerlab.drills.categories import jamfold_category, postflop_category
+from pokerlab.drills.categories import jamfold_category, postflop_category, snap_depth
 from pokerlab.drills.scoring import score
 from pokerlab.hh.decisions import Decision, hand_label
 from pokerlab.hh.population import Population
@@ -81,12 +81,20 @@ def grade_tier1(d: Decision) -> Grading:
                        postflop_category(d.formation, d.street, d.action_type),
                        graded=False,
                        note="preflop but not a chart-modelled jam/fold spot")
-    leak_key = jamfold_category(pos, d.eff_bb)  # depth-bucketed spot category
+    # Snap ONCE, here, and use that depth for both the category and the answer
+    # key (round-2 finding [E33]). Keying the leak off the snapped bucket while
+    # solving the chart at the RAW eff_bb made the grader and the drill that
+    # category selects disagree — at 12.5bb the two charts flip jam/fold on 21
+    # hand classes, so a hand could be marked a leak and the drill that trains
+    # it prescribe the opposite action. The bucket is the syllabus unit; the
+    # drill generator already solves at it (drills/generator.py:jamfold_drills).
+    depth_bb = float(snap_depth(d.eff_bb))
+    leak_key = jamfold_category(pos, depth_bb)  # depth-bucketed spot category
     ca = _chart_action(d, pos)
     if ca is None:
         return Grading(d.index, TIER_CHART, d.action_type, None, None, None,
                        leak_key, graded=False, note="off-chart action")
-    sol = jamfold_range(pos, d.eff_bb, d.ante_bb)[hand_label(d.hole)]
+    sol = jamfold_range(pos, depth_bb, d.ante_bb)[hand_label(d.hole)]
     sc = score(sol, ca, d.pot_bb)
     return Grading(d.index, TIER_CHART, ca, sc.best_action, sc.ev_loss_bb,
                    sc.correct, leak_key, graded=True,
