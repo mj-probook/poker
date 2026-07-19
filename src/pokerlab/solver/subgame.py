@@ -612,6 +612,16 @@ class SubgameSolver:
         """Exploitability as a fraction of the starting pot."""
         return self.exploitability(avg) / self.pot0
 
+    def valid_opponent_reach(self, player: int = 0) -> np.ndarray:
+        """Per live combo: how much of the OPPONENT's range it can legally face.
+
+        Zero means this hand blocks the opponent's entire range — no matchup
+        exists, so every value for it is 0/0 and any "solution" for it would be
+        fabricated (wave-2 [E26]).
+        """
+        opp = self._r1 if player == 0 else self._r0
+        return valid_reach(opp, self.c1, self.c2)
+
     # ---- root strategy/EVs, per live combo (adapter input) ----
     def root_action_evs(self, player: int = 0, avg=None):
         """At the root decision node for ``player``: action labels, per-action

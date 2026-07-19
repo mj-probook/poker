@@ -25,17 +25,23 @@ def root_solution_by_class(
 ) -> dict[str, Solution]:
     """{hand_class -> Solution} for the root actor's range (``player``)."""
     labels, evs, freqs, my_reach = solver.root_action_evs(player)
+    valid_opp = solver.valid_opponent_reach(player)
     live_pos = {full: i for i, full in enumerate(solver.live.tolist())}
     out: dict[str, Solution] = {}
     for cls in hands.HAND_CLASSES:
         idxs, weights = [], []
         for a, b in hands.card_combos(cls):
             i = live_pos.get(COMBO_INDEX[(min(a, b), max(a, b))])
-            if i is not None and my_reach[i] > 0:
+            # A combo that blocks the opponent's ENTIRE range has no legal
+            # matchup: its EVs are all 0/0 and its average strategy falls back
+            # to uniform. Emitting that as a Solution manufactures an answer key
+            # where every action scores correct with zero EV loss, so such
+            # combos are excluded here at the source (wave-2 [E26]).
+            if i is not None and my_reach[i] > 0 and valid_opp[i] > 0:
                 idxs.append(i)
                 weights.append(my_reach[i])
         if not idxs:
-            continue  # class not in this player's range on this board
+            continue  # class absent from this player's range, or fully blocked
         w = np.array(weights)
         wsum = w.sum()
         actions: dict[str, tuple[float, float]] = {}

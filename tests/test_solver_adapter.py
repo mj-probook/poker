@@ -84,3 +84,41 @@ def test_solution_index_insert_is_queryable():
     insert_solution_index(conn, "spotA", "solves/new.json", sg.SOLVER_VERSION, 0.003)
     row = conn.execute("SELECT * FROM solution_index WHERE spot_key='spotA'").fetchone()
     assert row["path"] == "solves/new.json"
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E26]: when a hero hand blocks the ENTIRE villain range, its valid
+# opponent reach is 0, so every per-action EV divides to 0 and the average
+# strategy falls back to uniform. The adapter emitted that as a real Solution:
+# all EVs 0 and every frequency >= 5%, which the decision-e rule reads as
+# "every action is correct, ev_loss 0". A fabricated answer key is worse than
+# no answer key — the class must simply not be emitted.
+# --------------------------------------------------------------------------- #
+def _fully_blocked_solved():
+    """Hero holds AhAs (blocking every villain combo) plus one live hand."""
+    board = _cards("2c3d4h5s7c")
+    r0 = _range(["AhAs", "KdKh"])
+    r1 = _range(["AhKc", "AsQc"])   # every villain combo shares a card with AhAs
+    cfg = sg.BetConfig(sizes=(0.75,), jam=False, max_raises=0)
+    tree = sg.build_tree(board, pot0=10.0, stack=20.0, cfg=cfg)
+    s = sg.SubgameSolver(tree, board, r0, r1, pot0=10.0)
+    s.iterate(50)
+    return s
+
+
+def test_fully_blocked_hand_class_is_not_emitted_as_a_solution():
+    s = _fully_blocked_solved()
+    sols = root_solution_by_class(s, player=0, range_ctx="ctx")
+
+    assert "AA" not in sols, "a fully-blocked class must not be emitted"
+    assert "KK" in sols, "the unblocked class must still be solved"
+
+
+def test_no_emitted_solution_is_all_zero_ev_with_uniform_frequencies():
+    """The fabrication signature: zero EVs everywhere + a flat strategy."""
+    s = _fully_blocked_solved()
+    for cls, sol in root_solution_by_class(s, player=0, range_ctx="ctx").items():
+        evs = [ev for ev, _ in sol.actions.values()]
+        freqs = [f for _, f in sol.actions.values()]
+        assert any(ev != 0.0 for ev in evs) or len(set(freqs)) > 1, (
+            f"class {cls} looks fabricated: EVs {evs}, freqs {freqs}")
