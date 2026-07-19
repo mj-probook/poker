@@ -17,9 +17,13 @@ plan §3/§9). OOP acts first; the hero is the OOP root actor.
 The value net is the classic PBS→CFV river network:
 
 * **features (the PBS, public line/history encoded)** — 52-card board multi-hot
-  + pot (bb) + both players' 169-class belief. Slice-G's note ("encode the
-  public line/history in the features") is honoured: the board + pot + belief
-  *is* the public state at the depth boundary.
+  + pot (bb) + **chips behind** (bb) + both players' 169-class belief. Slice-G's
+  note ("encode the public line/history in the features") is honoured: board +
+  pot + stack + belief *is* the public state at the depth boundary. Chips-behind
+  is load-bearing, not decoration — a river subgame with 20bb behind is a
+  different game from the same pot with 0 behind, and turn betting drives it
+  from 20 to 0. (One scalar is exact: a street only closes once both players
+  have matched.)
 * **target** — the per-169-class root value of the *river* subgame from an exact
   Slice-D CFR+ solve, **for both players** (a 2×169 stacked target: OOP head and
   IP head). Values are *normalized per-hand EV* (bb per matchup), because the
@@ -27,6 +31,11 @@ The value net is the classic PBS→CFV river network:
   absolute reach mass would not be a function of the input. Off-blueprint
   beliefs are sampled (random, occasionally strength-tilted, sparse) per
   Slice-G's note.
+
+Rows are sampled at the `(pot, chips-behind)` states a turn subgame can actually
+reach at its river deal — derived from the tree itself (`river_entry_states`), so
+it tracks the bet grid automatically and the net is trained on the distribution
+it will be *queried* at.
 
 Data is SpotKey-stratified (flop iso-class recorded per row) and written to
 Parquet via pyarrow.
@@ -44,16 +53,12 @@ onto the exact river continuation, best-responded with Slice-D's verified
 vectorized BR. So the reported number is the real cost of the net's
 approximation, exactly the L4 metric.
 
-> **Units matter, and got this wrong once.** The first recorded run fed the
-> net's raw (normalized) output straight into `_walk`, which propagates
-> counterfactual values — opponent-reach-weighted. The leaf branch therefore
-> arrived **36–62× too small** (measured across fixture seeds), so turn CFR
-> effectively ignored the net, and IP's leaf used `-v0`, which assumes a
-> zero-sum-per-matchup subgame that dead money makes false. Both are fixed
-> (per-player heads + an explicit normalized↔counterfactual conversion), and the
-> numbers below are from the re-run. Regression tests pin the leaf's magnitude
-> against the branch it replaces and check that an *oracle*-leaf depth-limited
-> solve reproduces the full turn+river solve.
+A leaf standing in for a subtree has to match it in **units** and in **state**;
+this harness got both wrong at first, and the Go/no-go section below records
+what that cost. Regression tests now pin all three properties: the leaf's
+magnitude against the branch it replaces, an *oracle*-leaf solve reproducing
+the full turn+river solve, and the leaf being queried at exactly the tree's
+river-entry `(pot, stack)` states.
 
 Per Slice-G's warning, we measure exploitability **against the depth-limited
 oracle baseline, not a naively-glued full agent** (that agent's ~0.42 Leduc
@@ -64,49 +69,64 @@ fix — explicitly out of toy scope).
 
 Run: `run_spike(n_rows=3000, n_eval=20, seed=0, gen_iters=80, eval_iters=150,
 epochs=400, eval_keep_frac=0.10)` — a representative local-minutes spike
-(~17 min on CPU). `run_spike` defaults to ~1e4 rows for a production run.
+(~14 min on CPU). `run_spike` defaults to ~1e4 rows for a production run.
 
 | metric | value |
 |---|---|
 | data rows (river solves) | 3000 |
-| value-net held-out loss (masked MSE over both heads, bb²) | 28.76 |
+| value-net held-out loss (masked MSE over both heads, bb²) | 117.7 |
+| … as RMS CFV error / target std | 10.9 bb / 16.2 bb → **45% of target variance unexplained** |
 | held-out eval subgames | 20 |
 | mean exploitability — **oracle** (exact turn+river) | **0.191 bb** |
-| mean exploitability — **net-driven** depth-limited turn | **3.530 bb** |
+| mean exploitability — **net-driven** depth-limited turn | **3.257 bb** |
 | go/no-go threshold | 0.75 bb |
-| **verdict** | **NO-GO** (net-driven 3.53 bb ≫ 0.75 bb bar) |
+| **verdict** | **NO-GO** (net-driven 3.26 bb ≫ 0.75 bb bar) |
 
-> **Superseded:** the original recorded run reported net-driven **6.500 bb**
-> (loss 29.06, oracle 0.191) under the leaf-units bug described above. That run
-> is superseded by the numbers in the table; the units fix cut the net-driven
-> figure roughly in half, and did not change the verdict.
+> **Superseded runs**, kept for the record — the verdict was NO-GO in all three:
+>
+> | run | net-driven | loss | defect present |
+> |---|---|---|---|
+> | 1st recorded | 6.500 bb | 29.06 | leaf units (net entered CFR 36–62× light) + IP leaf `-v0` |
+> | 2nd | 3.530 bb | 28.76 | leaf queried at the subgame root pot, full stack assumed |
+> | **current** | **3.257 bb** | **117.7** | — |
+>
+> **The loss column is not comparable across runs.** Fixing the pot/stack
+> mismatch widened the training distribution (pots to ~60bb instead of ≤20bb),
+> so the targets themselves are ~3× larger and a larger MSE is expected. The
+> scale-free reading — 45% of target variance unexplained — is the one to use.
 
 ## Go / no-go
 
 **NO-GO at spike scale.** The mechanism is validated — the exact turn+river
 oracle converges to a low **0.19 bb** exploitability baseline, and the harness
 measures the net-driven turn strategy in the *full* game with Slice-D's verified
-BR — but the value net at 3000-row scale (held-out loss **28.8 bb²**, i.e. an
-RMS CFV error of ~5 bb) is far too coarse: the net-driven depth-limited turn
-solve is **3.53 bb** exploitable, ~18× the oracle and ~4.7× the bar.
+BR — but the value net at 3000-row scale is far too coarse, leaving **45% of
+the target CFV variance unexplained**: the net-driven depth-limited turn solve
+is **3.26 bb** exploitable, ~17× the oracle and ~4.3× the bar.
 
-**What the re-run changed, honestly.** The previously recorded rationale claimed
-the 6.5 bb gap was "a data/accuracy result, not a mechanism bug". That claim was
-false when it was written — there *was* a mechanism bug (the leaf units), and it
-inflated the number by ~1.8×. The verdict is unchanged, but it is now measured
-on a leaf that is verified to enter CFR on the right scale, with an oracle leaf
-shown to reproduce the exact solve.
+**It took three runs to earn that sentence.** The first write-up asserted the
+gap was "a data/accuracy result, not a mechanism bug". That was false when
+written — there were *two* independent harness bugs, and both had to be fixed
+before the claim could be made honestly:
 
-**Known remaining harness defect (not yet fixed).** The leaf still passes the
-subgame's *root* pot as the net's pot feature, but a river-entry leaf sits at
-whatever the turn betting built — on this tree 8, 16, 24 or 48 bb. So on every
-line involving turn betting the net is queried off its training distribution
-(it was trained on river subgames labelled with their own pot). That means the
-remaining 3.53 bb is **not** yet cleanly attributable to net accuracy alone;
-some unknown share is this feature mismatch. Fixing it needs the node's pot
-threaded through the leaf callback. It cannot rescue the verdict — the gap
-would have to close ~4.7× — but the *rationale* should not claim more than the
-evidence supports until it is fixed.
+1. **Leaf units.** The net's normalized output was fed straight into `_walk`,
+   which propagates opponent-reach-weighted counterfactual values, so the leaf
+   branch arrived 36–62× light and CFR effectively ignored it. IP's leaf also
+   used `-v0`, assuming a zero-sum-per-matchup subgame that dead money makes
+   false.
+2. **Leaf state.** The leaf was queried at the subgame *root* pot with a full
+   stack implicitly assumed, but a river entry sits wherever the turn betting
+   left it — pot 8/16/24/48 with 20/16/12/0 behind on this tree. Chips-behind
+   was not a feature at all, so the net could not represent the difference.
+   **75% of the states the leaf actually queries fell outside the training
+   support.**
+
+Only now, with the leaf verified to enter CFR on the right scale (an oracle leaf
+reproduces the exact solve) and queried on-distribution (data-gen samples the
+same reachable `(pot, stack)` set the leaf sees), is the remaining gap
+attributable to net accuracy. Note the fixes moved the *number* very little
+(6.50 → 3.53 → 3.26 bb): the verdict was never in doubt, but the reasoning
+behind it was wrong twice.
 
 This is the *expected* L4 outcome and mirrors Slice G's Leduc finding: a value
 net drives a depth-limited solver only as well as its CFV accuracy allows, and
