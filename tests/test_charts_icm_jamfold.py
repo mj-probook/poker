@@ -123,3 +123,65 @@ def test_big_blind_shorter_than_one_blind_does_not_go_negative():
 def test_icm_equities_rejects_a_negative_stack():
     with pytest.raises(AssertionError):
         icm_equities([100, -50, 100], [500, 300])
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 finding [E50]: the ICM chart's near-universal jamming was confirmed
+# GENUINE, not a solver artefact -- but that verdict rested on the numpy solve
+# and its own exploitability instrument, which share an implementation and so
+# cannot corroborate each other. This judges the numpy profile with the
+# independent Slice-B game-tree walk (cfr.exploit.nash_conv) at full 169-class
+# scale on the ICM model.
+# --------------------------------------------------------------------------- #
+def test_numpy_exploitability_matches_an_independent_tree_walk():
+    """Two independent implementations must agree on the ICM Nash gap.
+
+    `model_exploitability` is closed-form numpy over the 169x169 payoff
+    matrices; `nash_conv` walks a real 28,561-chance-outcome JamFoldGame tree
+    built from the same model. They share no code below JamFoldModel, so
+    agreement pins BOTH the numpy solve and the exploitability math -- either
+    one drifting breaks this. The assertion is on their RATIO, so it is
+    indifferent to legitimate movement in the ranges themselves.
+
+    nash_conv is the summed per-player best-response gain; exploitability is
+    that divided by num_players (the pyspiel convention, impl doc §1), hence
+    the /2 for this 2-player game.
+
+    Subsumes test_charts_jamfold.py::test_numpy_solver_matches_cfr_on_tiny_fixture,
+    which does the same cross-check on 3 hand classes of the CHIP model -- this
+    is the full 169 classes on the ICM model, where the general-sum payoffs make
+    the two implementations much easier to disagree.
+
+    Deliberately NOT asserted here: a threshold on sb_jam. The solved profile
+    jams ~everything, but CFR+ converges to 0.999996, not 1.0 -- exact 1.0 is
+    unreachable in finite iterations, so `assert sb_jam.min() < 1.0` would pass
+    on floating-point convergence noise while proving nothing about the chart.
+    Agreement between two implementations is the load-bearing claim.
+    """
+    from pokerlab.cfr import build_tree, nash_conv
+    from pokerlab.charts.equity import load_equity_matrix
+    from pokerlab.charts.jamfold import (
+        JamFoldGame,
+        icm_model,
+        joint_prior,
+        model_exploitability,
+        solve_model,
+    )
+
+    E = load_equity_matrix().equity_matrix
+    model = icm_model([10000] * 4, 0, 1, list(_PAYOUTS), 1000, 0.0, E)
+    P = joint_prior()
+    P = P / P.sum()
+
+    x, y, w = solve_model(model, P, iters=1500)
+    expl_np = model_exploitability(model, P, x, y, w)
+    assert expl_np > 0.0, "a zero gap would make the ratio assertion vacuous"
+
+    tree = build_tree(JamFoldGame(model, P))
+    profile = {}
+    for i in range(len(x)):
+        profile[f"SB:{i}"] = {"jam": float(x[i]), "fold": float(1.0 - x[i])}
+        profile[f"BB:{i}"] = {"call": float(y[i]), "fold": float(1.0 - y[i])}
+
+    independent = nash_conv(tree, profile) / 2.0      # -> per-player gap
+    assert abs(independent - expl_np) / expl_np < 1e-6
