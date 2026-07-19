@@ -38,6 +38,16 @@ from pokerlab.types import Card
 # ---------------------------------------------------------------------------
 SOLVER_VERSION = "subgame-cfrplus-v1"
 
+
+class DegenerateRangeError(ValueError):
+    """The subgame has no legal hero/villain matchup, so values are undefined.
+
+    Raised instead of dividing by a zero normalizer. A ValueError subclass so
+    existing broad guards still catch it, but named so callers can tell "this
+    spot is unsolvable as posed" apart from "the solver hit a bug" — the
+    distinction the HH batch drain needs to avoid silent, permanent loss.
+    """
+
 COMBOS: tuple[tuple[int, int], ...] = tuple(itertools.combinations(range(52), 2))
 NUM_COMBOS = len(COMBOS)  # 1326
 COMBO_INDEX: dict[tuple[int, int], int] = {c: i for i, c in enumerate(COMBOS)}
@@ -563,7 +573,18 @@ class SubgameSolver:
 
     def _root_norm(self) -> float:
         # total valid joint mass (both hole pairs disjoint)
-        return float((self._r0 * valid_reach(self._r1, self.c1, self.c2)).sum())
+        norm = float((self._r0 * valid_reach(self._r1, self.c1, self.c2)).sum())
+        if norm <= 0.0:
+            # Not necessarily an empty range: the two ranges can be non-empty
+            # and still share every card, so no legal matchup exists (e.g. hero
+            # holds the only combo villain's range is built from). Every
+            # per-hand value is then 0/0 — undefined, not zero — so callers must
+            # see a named condition rather than a bare ZeroDivisionError they
+            # can only treat as "something broke" (wave-2 [E25]).
+            raise DegenerateRangeError(
+                f"subgame has no legal matchup: {self.live.size} live combo(s) "
+                "but zero valid joint reach (ranges block each other entirely)")
+        return norm
 
     def best_response_value(self, br: int, avg=None) -> float:
         avg = avg if avg is not None else self._avg_compressed()

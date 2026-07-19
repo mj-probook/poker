@@ -81,10 +81,27 @@ def test_batch_worker_drains_queue_and_grades_tier2() -> None:
     assert tier2 and all(g["ev_loss"] is not None for g in tier2)
 
 
-def test_solver_miss_marks_row_failed() -> None:
+def test_solver_miss_and_unsolvable_spot_are_different_outcomes() -> None:
+    """Replaces test_solver_miss_marks_row_failed, which pinned the [E15] bug.
+
+    That test asserted a miss marks the row 'failed' — the exact behaviour that
+    silently dropped every spot queued before the solver could handle it. A miss
+    is the normal state of a backlog and must stay drainable; only a genuinely
+    unsolvable spot is terminal. See test_solver_miss_leaves_the_row_drainable
+    for the drain-again half.
+    """
+    from pokerlab.hh.persist import UnsolvableSpot
+
     conn, _report, counts = _persisted_session()
-    result = drain_batch_queue(conn, lambda spot, d: None, graded_at=AT)
-    assert result["failed"] == counts["queued"] and result["done"] == 0
+    miss = drain_batch_queue(conn, lambda spot, d: None, graded_at=AT)
+    assert miss["missed"] == counts["queued"] and miss["failed"] == 0
+    assert all(r["status"] == "pending" for r in db.batch_rows(conn))
+
+    def unsolvable(spot_key: str, d):
+        raise UnsolvableSpot("no legal matchup")
+
+    term = drain_batch_queue(conn, unsolvable, graded_at=AT)
+    assert term["unsolvable"] == counts["queued"] and term["missed"] == 0
     assert all(r["status"] == "failed" for r in db.batch_rows(conn))
 
 
@@ -266,3 +283,52 @@ def test_a_parser_fix_lets_a_previously_failed_hand_import() -> None:
 def test_clean_session_reports_zero_failed() -> None:
     conn, _report, counts = _persisted_session()
     assert counts["failed"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E15][E25]: a solver MISS marked the row 'failed', and 'failed' rows
+# are never selected again — so a spot queued before the solver could handle it
+# dropped out of the backlog permanently and silently. A miss is the *normal*
+# state of a backlog, not a terminal failure. Genuinely unsolvable spots stay
+# terminal, but must say so distinctly.
+# --------------------------------------------------------------------------- #
+def test_solver_miss_leaves_the_row_drainable() -> None:
+    conn, _report, counts = _persisted_session()
+
+    first = drain_batch_queue(conn, lambda spot, d: None, graded_at=AT)
+    assert first["missed"] == counts["queued"] and first["done"] == 0
+    # NOT terminal: still pending, still in the backlog
+    assert len(db.pending_batch(conn)) == counts["queued"]
+    assert all(r["status"] == "pending" for r in db.batch_rows(conn))
+
+    # ...and a later drain, once the solver can handle them, completes them
+    second = drain_batch_queue(conn, lambda spot, d: _STUB_SOLUTION, graded_at=AT)
+    assert second["done"] == counts["queued"]
+    assert all(r["status"] == "done" for r in db.batch_rows(conn))
+
+
+def test_unsolvable_spot_is_terminal_and_counted_apart_from_errors() -> None:
+    from pokerlab.hh.persist import UnsolvableSpot
+
+    conn, _report, counts = _persisted_session()
+
+    def solver(spot_key: str, d):
+        raise UnsolvableSpot("degenerate range")
+
+    result = drain_batch_queue(conn, solver, graded_at=AT)
+    assert result["unsolvable"] == counts["queued"]
+    assert result["failed"] == 0 and result["missed"] == 0
+    assert all(r["status"] == "failed" for r in db.batch_rows(conn))
+
+
+def test_failed_rows_can_be_deliberately_reopened() -> None:
+    conn, _report, counts = _persisted_session()
+    drain_batch_queue(conn, lambda s, d: (_ for _ in ()).throw(RuntimeError("boom")),
+                      graded_at=AT)
+    assert all(r["status"] == "failed" for r in db.batch_rows(conn))
+
+    # an operator escape hatch: after fixing the bug, reopen them explicitly
+    reopened = db.retry_failed_batch(conn)
+    assert reopened == counts["queued"]
+    result = drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
+    assert result["done"] == counts["queued"]

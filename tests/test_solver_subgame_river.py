@@ -179,3 +179,48 @@ def test_river_solver_reduces_exploitability():
     late = s.exploitability_pct()
     assert late < early
     assert late < 0.005  # ≤0.5% of pot on this tiny river spot
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E25]: a subgame can have live combos but ZERO valid joint mass — every
+# hero hand blocks every villain hand. _root_norm() then returned 0.0 and every
+# value query died with a bare ZeroDivisionError, which callers could only
+# catch as "something went wrong" (and the HH drain turned into permanent,
+# invisible loss). It must be a typed, recognisable condition.
+# --------------------------------------------------------------------------- #
+def _mutually_blocking_solver():
+    import numpy as np
+
+    from pokerlab.solver import subgame as sg
+
+    r0 = np.zeros(sg.NUM_COMBOS)
+    r1 = np.zeros(sg.NUM_COMBOS)
+    r0[sg.COMBO_INDEX[(48, 51)]] = 1.0
+    r1[sg.COMBO_INDEX[(48, 50)]] = 1.0   # shares card 48 with the only hero hand
+    board = (0, 1, 2, 3, 4)
+    tree = sg.build_tree(board, pot0=5.0, stack=10.0)
+    return sg.SubgameSolver(tree, board, r0, r1, pot0=5.0)
+
+
+def test_degenerate_range_is_a_typed_error_not_zero_division():
+    from pokerlab.solver.subgame import DegenerateRangeError
+
+    s = _mutually_blocking_solver()
+    # the pathology: live combos exist, but no matchup between them is legal
+    assert s.live.size >= 1
+    s.iterate(2)
+
+    for call in (lambda: s.exploitability(),
+                 lambda: s.best_response_value(0),
+                 lambda: s.on_policy_value(0),
+                 lambda: s.exploitability_pct()):
+        with pytest.raises(DegenerateRangeError):
+            call()
+
+
+def test_degenerate_range_error_is_catchable_as_valueerror():
+    """Callers that guard broadly should still catch it."""
+    s = _mutually_blocking_solver()
+    s.iterate(2)
+    with pytest.raises(ValueError):
+        s.exploitability()

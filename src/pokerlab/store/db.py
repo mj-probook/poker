@@ -187,6 +187,20 @@ def recover_running_batch(conn: sqlite3.Connection) -> int:
     return int(cur.rowcount)
 
 
+def retry_failed_batch(conn: sqlite3.Connection) -> int:
+    """Reopen terminally-failed rows for another drain; return the count.
+
+    'failed' means "do not keep retrying this automatically" — a genuinely
+    unsolvable spot, or a bug. Neither should silently vanish forever, so this
+    is the deliberate escape hatch: fix the cause, reopen, drain again. Never
+    called automatically (wave-2 [E15]).
+    """
+    cur = conn.execute(
+        "UPDATE batch_queue SET status='pending' WHERE status='failed'")
+    conn.commit()
+    return int(cur.rowcount)
+
+
 def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str) -> None:
     if status not in ("pending", "running", "done", "failed"):
         raise ValueError(f"bad batch status {status!r}")

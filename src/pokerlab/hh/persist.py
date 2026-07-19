@@ -31,6 +31,18 @@ from pokerlab.types import Solution, TIER_SOLVER
 # hero's hand class; a stub can ignore both. Returns None on a solve miss.
 Solver = Callable[[str, Decision], Solution | None]
 
+
+class UnsolvableSpot(Exception):
+    """Raised by a drain solver to mark a spot permanently unsolvable.
+
+    The contract that lets the drain tell "no solution yet" (return None -> the
+    row stays queued) apart from "no solution is possible for this spot as
+    posed" (raise this -> the row is closed, visibly). Without the distinction
+    the two collapse into one terminal status and real backlog is lost
+    (wave-2 [E15]).
+    """
+
+
 _PARSERS = {
     "PokerStars": pokerstars.parse_pokerstars,
     "GGPoker": ggpoker.parse_ggpoker,
@@ -131,18 +143,28 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
 def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
     """Batch worker: solve each pending spot, grade it tier-2, mark row done.
 
-    A solver miss (returns None) marks the row failed and leaves it ungraded.
-    So does a row that *raises* — a re-parse failure, a decision index that no
-    longer resolves, or a solver blowing up must cost that row only, never the
-    rest of the backlog (round-1 finding [10]).
+    Row outcomes, and why they differ (wave-2 [E15]):
+
+      * **hit** -> graded, 'done'.
+      * **miss** (solver returns None) -> left 'pending'. A miss is the normal
+        state of a backlog — the library just does not have that spot yet — so
+        it must stay drainable. Marking misses 'failed' silently dropped every
+        spot queued before the solver could handle it.
+      * **unsolvable** (solver raises `UnsolvableSpot`) -> 'failed'. Terminal on
+        purpose: retrying cannot help. Counted separately so it is visible.
+      * **error** (anything else raises) -> 'failed', and only that row; a bug
+        must never cost the rest of the backlog (round-1 finding [10]).
+
+    'failed' is not a black hole: `db.retry_failed_batch` reopens those rows
+    deliberately once the cause is fixed.
 
     Rows stranded at 'running' by an earlier crashed drain are recovered to
     'pending' first, so the backlog cannot silently leak work.
 
-    Returns counts {done, failed, recovered}.
+    Returns counts {done, missed, unsolvable, failed, recovered}.
     """
     recovered = db.recover_running_batch(conn)
-    done = failed = 0
+    done = missed = unsolvable = failed = 0
     for row in db.pending_batch(conn):
         db.set_batch_status(conn, row["id"], "running")
         try:
@@ -150,13 +172,17 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             parsed = parse_by_site(hand["site"], hand["raw"])
             d = extract_decisions(parsed)[row["decision_idx"]]
             solution = solver(row["spot_key"], d)
+        except UnsolvableSpot:
+            db.set_batch_status(conn, row["id"], "failed")
+            unsolvable += 1
+            continue
         except Exception:  # noqa: BLE001 - per-row isolation boundary
             db.set_batch_status(conn, row["id"], "failed")
             failed += 1
             continue
         if solution is None:
-            db.set_batch_status(conn, row["id"], "failed")
-            failed += 1
+            db.set_batch_status(conn, row["id"], "pending")  # still drainable
+            missed += 1
             continue
         g = grade_tier2(d, solution)
         db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
@@ -164,4 +190,5 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
                           g.best or "", g.ev_loss, g.leak_key, graded_at)
         db.set_batch_status(conn, row["id"], "done")
         done += 1
-    return {"done": done, "failed": failed, "recovered": recovered}
+    return {"done": done, "missed": missed, "unsolvable": unsolvable,
+            "failed": failed, "recovered": recovered}

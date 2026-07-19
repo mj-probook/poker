@@ -146,15 +146,21 @@ def make_drain_solver(conn, *, iters: int = DEFAULT_ITERS, cfg: sg.BetConfig = T
     def solver(spot_key: str, d: Decision) -> Solution | None:
         if not solvable(d):
             return None
-        solved = solve_decision(d, iters=iters, cfg=cfg)
-        if solved is None:
-            return None
-        if persist:
-            key = tier2_key(d)
-            path, expl = write_solve(solved, key)
-            insert_solution_index(conn, key, path, sg.SOLVER_VERSION,
-                                  expl / solved.pot0)
-        return _hero_solution(d, solved)
+        try:
+            solved = solve_decision(d, iters=iters, cfg=cfg)
+            if solved is None:
+                return None
+            if persist:
+                key = tier2_key(d)
+                path, expl = write_solve(solved, key)
+                insert_solution_index(conn, key, path, sg.SOLVER_VERSION,
+                                      expl / solved.pot0)
+            return _hero_solution(d, solved)
+        except sg.DegenerateRangeError as exc:
+            # No legal hero/villain matchup: re-solving cannot ever help, so
+            # this is terminal for the row rather than a miss to retry — but it
+            # must be visible as "unsolvable", not swallowed (wave-2 [E15][E25]).
+            raise UnsolvableSpot(f"{tier2_key(d)}: {exc}") from exc
     return solver
 
 
