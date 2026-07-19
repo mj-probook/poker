@@ -204,6 +204,12 @@ class Terminal:
 class Chance:
     children: list[tuple[int, "Node"]]  # (dealt card, subtree)
     divisor: float
+    # Public state at this deal, recorded for depth-limited solvers that replace
+    # a chance node with a learned leaf and must query it at the node's OWN
+    # state. Both players have matched whenever a street closes, so a single
+    # `stack` (chips behind, per player) is exact.
+    pot: float = 0.0
+    stack: float = 0.0
 
 
 @dataclass
@@ -246,19 +252,19 @@ class _TreeBuilder:
         children = [
             (c, self._runout(tuple(board) + (c,), invested)) for c in _remaining(board)
         ]
-        return Chance(children, float(divisor))
+        return Chance(children, float(divisor), pot, 0.0)  # all-in: nothing behind
 
     # ---- what happens when a street closes peacefully (both matched) ----
     def _advance(self, board, invested, stack):
+        pot = self.pot0 + invested[0] + invested[1]
         if len(board) >= 5:
-            pot = self.pot0 + invested[0] + invested[1]
             return Terminal("showdown", pot, (invested[0], invested[1]))
         divisor = 52 - len(board) - 4
         children = [
             (c, self._street_start(tuple(board) + (c,), invested, stack))
             for c in _remaining(board)
         ]
-        return Chance(children, float(divisor))
+        return Chance(children, float(divisor), pot, float(min(stack)))
 
     def _street_start(self, board, invested, stack):
         return self._node(board, list(invested), list(stack), [0.0, 0.0], 0, 0, False)

@@ -17,7 +17,7 @@ def test_class_bridge_and_features():
     r = np.ones(hunl.NUM_COMBOS)
     cls = hunl.class_reach(r * 0 + 1)
     assert cls.shape == (hunl.N_CLASSES,) and cls.sum() == hunl.NUM_COMBOS
-    f = hunl.features(board, 10.0, r.copy(), r.copy())
+    f = hunl.features(board, 10.0, hunl.STACK_BB, r.copy(), r.copy())
     assert f.shape == (hunl.FEAT_DIM,) and np.isfinite(f).all()
 
 
@@ -130,8 +130,8 @@ def test_net_leaf_is_in_counterfactual_units():
     ref0, ref1 = SubgameSolver._walk(dls, chance, board4,
                                      dls._r0.copy(), dls._r1.copy(), None)
 
-    leaf = hunl.net_leaf_fn(net, dls, pot0)
-    v0, v1 = leaf(board4, dls._r0.copy(), dls._r1.copy())
+    leaf = hunl.net_leaf_fn(net, dls)
+    v0, v1 = leaf(board4, dls._r0.copy(), dls._r1.copy(), chance.pot, chance.stack)
 
     for leaf_v, ref in ((v0, ref0), (v1, ref1)):
         ratio = float(np.abs(leaf_v).mean()) / float(np.abs(ref).mean())
@@ -220,6 +220,85 @@ def test_samples_carry_both_heads():
     for s in samples:
         assert s.cfv.shape == (hunl.OUT_DIM,)
         assert s.mask.shape == (hunl.OUT_DIM,)
+
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 follow-up to [19]: the leaf was queried with the SUBGAME ROOT pot and
+# an implicit full stack, but a river-entry node sits at whatever the turn
+# betting built. On this tree that is pot 8/16/24/48 with 20/16/12/0 behind,
+# while every training row was generated at pot~U(2,20) with 20 behind — so the
+# net was queried far off its training distribution on every betting line.
+# (Both players have matched at a street close, so the stack behind is pinned by
+# the pot: stack = start - (pot - pot0)/2.)
+# --------------------------------------------------------------------------- #
+def _river_entry_states(root):
+    """(pot, stack) at every river-entry chance node, derived independently.
+
+    Follows the check-line down to a terminal: no further money goes in, so that
+    terminal's pot is the pot at the chance node.
+    """
+    from pokerlab.solver.subgame import Chance, Decision, Terminal
+
+    out = set()
+
+    def first_terminal(n):
+        while not isinstance(n, Terminal):
+            n = n.children[0][1] if isinstance(n, Chance) else n.children[0]
+        return n
+
+    def walk(n):
+        if isinstance(n, Chance):
+            t = first_terminal(n)
+            out.add((round(t.pot, 6), round(t.committed[0], 6)))
+            return
+        if isinstance(n, Decision):
+            for c in n.children:
+                walk(c)
+
+    walk(root)
+    # committed -> stack behind
+    return {(pot, round(hunl.STACK_BB - inv, 6)) for pot, inv in out}
+
+
+def test_leaf_is_queried_at_the_nodes_own_pot_and_stack():
+    board4, _, _, pot0, dls = _turn_fixture(pot0=8.0)
+    seen = []
+
+    def recording_leaf(board, reach0, reach1, pot, stack):
+        seen.append((round(pot, 6), round(stack, 6)))
+        z = np.zeros(dls.live.size)
+        return z, z
+
+    dls.set_leaf(recording_leaf).iterate(1)
+
+    expected = _river_entry_states(dls.root)
+    assert set(seen) == expected
+    # the whole point: betting lines really do differ from the root pot/stack
+    assert len(expected) > 1
+    assert (pot0, hunl.STACK_BB) in expected
+
+
+def test_features_encode_the_remaining_stack():
+    """A river subgame with 0 behind is a different game from one with 20."""
+    board = (0, 1, 2, 3, 4)
+    r = np.ones(hunl.NUM_COMBOS)
+    deep = hunl.features(board, 24.0, 12.0, r.copy(), r.copy())
+    shallow = hunl.features(board, 24.0, 0.0, r.copy(), r.copy())
+    assert deep.shape == (hunl.FEAT_DIM,) == shallow.shape
+    assert not np.array_equal(deep, shallow)
+
+
+def test_data_gen_samples_reachable_river_entry_states():
+    """Training rows must come from the (pot, stack) states the leaf will see."""
+    samples = hunl.generate_samples(12, seed=5, iters=20)
+    stacks = {round(s.stack, 6) for s in samples}
+    pots = {round(s.pot, 6) for s in samples}
+    # not every row pinned at the full starting stack any more
+    assert stacks != {hunl.STACK_BB}
+    assert max(pots) > hunl.STACK_BB   # turn betting builds pots past 20bb
+    for s in samples:
+        assert 0.0 <= s.stack <= hunl.STACK_BB
 
 
 @pytest.mark.slow

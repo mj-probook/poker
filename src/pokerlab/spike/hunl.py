@@ -59,18 +59,26 @@ def class_reach(range_combos: np.ndarray) -> np.ndarray:
     return out
 
 
-def features(board: tuple[int, ...], pot0: float,
+def features(board: tuple[int, ...], pot: float, stack: float,
              r0: np.ndarray, r1: np.ndarray) -> np.ndarray:
-    """PBS feature vector: board multi-hot + pot(bb) + both per-class beliefs."""
+    """PBS feature vector: board multi-hot + pot + stack behind + both beliefs.
+
+    ``stack`` (chips behind per player) is part of the public state and is NOT
+    implied by the pot: a river subgame with 20bb behind is a different game
+    from the same pot with 0 behind. Omitting it made the depth-limited leaf
+    unrepresentable, since a river entry after turn betting always has less
+    behind than the root (round-2 follow-up to finding [19]).
+    """
     board_hot = np.zeros(52)
     board_hot[list(board)] = 1.0
     c0, c1 = class_reach(r0), class_reach(r1)
     c0 = c0 / (c0.sum() or 1.0)
     c1 = c1 / (c1.sum() or 1.0)
-    return np.concatenate([board_hot, [pot0 / STACK_BB], c0, c1]).astype(np.float32)
+    return np.concatenate([board_hot, [pot / STACK_BB, stack / STACK_BB],
+                           c0, c1]).astype(np.float32)
 
 
-FEAT_DIM = 52 + 1 + N_CLASSES + N_CLASSES
+FEAT_DIM = 52 + 2 + N_CLASSES + N_CLASSES
 # Two heads: OOP per-class CFV, then IP per-class CFV. IP is NOT the zero-sum
 # complement of OOP — the subgame carries dead money (per matchup the two
 # payoffs sum to pot0, not 0) and the two players index different hands — so
@@ -108,11 +116,35 @@ def _deal_board(rng: np.random.Generator, n_cards: int) -> tuple[int, ...]:
 # Oracle CFV labels from the Slice-D solver.
 # --------------------------------------------------------------------------- #
 def solve_river(board: tuple[int, ...], pot0: float, r0: np.ndarray, r1: np.ndarray,
-                *, iters: int, cfg: sg.BetConfig = TINY_CFG) -> SubgameSolver:
-    tree = sg.build_tree(board, pot0=pot0, stack=STACK_BB, cfg=cfg)
+                *, iters: int, stack: float = STACK_BB,
+                cfg: sg.BetConfig = TINY_CFG) -> SubgameSolver:
+    tree = sg.build_tree(board, pot0=pot0, stack=stack, cfg=cfg)
     s = SubgameSolver(tree, board, r0.copy(), r1.copy(), pot0=pot0)
     s.iterate(iters)
     return s
+
+
+def river_entry_states(pot0: float, *, stack: float = STACK_BB,
+                       cfg: sg.BetConfig = TINY_CFG) -> list[tuple[float, float]]:
+    """The (pot, stack-behind) states a turn subgame can reach at a river deal.
+
+    This is exactly the distribution the depth-limited leaf gets queried at, so
+    data-gen samples from it rather than assuming the turn root's pot and a full
+    stack. Derived from the tree itself, so it tracks the bet grid automatically.
+    """
+    tree = sg.build_tree((0, 1, 2, 3), pot0=pot0, stack=stack, cfg=cfg)
+    out: set[tuple[float, float]] = set()
+
+    def walk(node):
+        if isinstance(node, Chance):
+            out.add((round(node.pot, 6), round(node.stack, 6)))
+            return
+        if isinstance(node, sg.Decision):
+            for c in node.children:
+                walk(c)
+
+    walk(tree)
+    return sorted(out)
 
 
 def _root_normalized_evs(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
@@ -204,9 +236,18 @@ class Sample:
     cfv: np.ndarray
     mask: np.ndarray
     iso: str
+    pot: float
+    stack: float
 
 
 def generate_samples(n: int, *, seed: int, iters: int = 120) -> list[Sample]:
+    """River PBS -> CFV rows, sampled at the states the leaf is queried at.
+
+    A turn root pot is drawn, then one of the (pot, stack) states that turn
+    subgame can actually reach at its river deal — so the net is trained on the
+    distribution it will be asked about, rather than always at the root pot with
+    a full stack (round-2 follow-up to finding [19]).
+    """
     rng = np.random.default_rng(seed)
     out: list[Sample] = []
     while len(out) < n:
@@ -215,11 +256,13 @@ def generate_samples(n: int, *, seed: int, iters: int = 120) -> list[Sample]:
         r1 = sample_range(rng, board)
         if r0.sum() == 0 or r1.sum() == 0:
             continue
-        pot0 = float(rng.uniform(2.0, STACK_BB))
-        s = solve_river(board, pot0, r0, r1, iters=iters)
+        turn_pot0 = float(rng.uniform(2.0, STACK_BB))
+        states = river_entry_states(turn_pot0)
+        pot, stack = states[int(rng.integers(len(states)))]
+        s = solve_river(board, pot, r0, r1, iters=iters, stack=stack)
         cfv, mask = both_class_cfv(s)
-        out.append(Sample(features(board, pot0, r0, r1), cfv, mask,
-                          iso_class(tuple(board[:3]))))
+        out.append(Sample(features(board, pot, stack, r0, r1), cfv, mask,
+                          iso_class(tuple(board[:3])), pot, stack))
     return out
 
 
@@ -284,11 +327,12 @@ def train_valuenet(X: np.ndarray, Y: np.ndarray, M: np.ndarray, *,
     return net, val_loss
 
 
-def net_class_cfv(net, board: tuple[int, ...], pot0: float,
-                  r0: np.ndarray, r1: np.ndarray) -> np.ndarray:
+def net_class_cfv(net, board: tuple[int, ...], pot: float,
+                  r0: np.ndarray, r1: np.ndarray,
+                  stack: float = STACK_BB) -> np.ndarray:
     import torch
 
-    x = torch.tensor(features(board, pot0, r0, r1)).unsqueeze(0)
+    x = torch.tensor(features(board, pot, stack, r0, r1)).unsqueeze(0)
     with torch.no_grad():
         return net(x).squeeze(0).numpy()
 
@@ -324,7 +368,9 @@ class DepthLimitedTurnSolver(SubgameSolver):
 
     def _walk(self, node, board, reach0, reach1, avg=None):
         if isinstance(node, Chance) and len(board) == 4:  # river deal -> net leaf
-            return self._leaf_fn(board, reach0, reach1)
+            # the node's OWN public state, not the subgame root's: turn betting
+            # moves both (round-2 follow-up to finding [19])
+            return self._leaf_fn(board, reach0, reach1, node.pot, node.stack)
         return super()._walk(node, board, reach0, reach1, avg)
 
 
@@ -357,7 +403,7 @@ def _turn_decision_nids(solver: SubgameSolver) -> set[int]:
     return turn
 
 
-def net_leaf_fn(net, dls: "DepthLimitedTurnSolver", pot0: float):
+def net_leaf_fn(net, dls: "DepthLimitedTurnSolver"):
     """Build the river-entry leaf value function for a depth-limited turn solve.
 
     Mirrors exactly what the river `Chance` node it replaces would do (see
@@ -365,11 +411,14 @@ def net_leaf_fn(net, dls: "DepthLimitedTurnSolver", pot0: float):
     players' normalized per-class CFV at the *post-river* belief, convert to
     counterfactual units against that river's blocked reach, mask the combos the
     river kills, and divide by the chance node's divisor.
+
+    ``pot``/``stack`` come from the node being replaced, not the subgame root —
+    turn betting moves both, and data-gen samples over the same states.
     """
     live = dls.live
     live_classes = _COMBO_TO_CLASS[live]
 
-    def leaf_fn(board, reach0, reach1):
+    def leaf_fn(board, reach0, reach1, pot, stack):
         used = set(board)
         rivers = [c for c in range(52) if c not in used]
         divisor = float(52 - len(board) - 4)
@@ -377,7 +426,7 @@ def net_leaf_fn(net, dls: "DepthLimitedTurnSolver", pot0: float):
         # belief at the river excludes combos containing the river card — the
         # same masking the training rows were generated under (5-card boards).
         feats = np.stack([
-            features(board + (c,), pot0, _expand(reach0 * m, live),
+            features(board + (c,), pot, stack, _expand(reach0 * m, live),
                      _expand(reach1 * m, live))
             for c, m in zip(rivers, masks)
         ])
@@ -405,7 +454,7 @@ def evaluate_spot(net, board4: tuple[int, ...], pot0: float,
     tree = sg.build_tree(board4, pot0=pot0, stack=STACK_BB, cfg=TINY_CFG)
     dls = DepthLimitedTurnSolver(tree, board4, r0.copy(), r1.copy(), pot0=pot0)
 
-    dls.set_leaf(net_leaf_fn(net, dls, pot0)).iterate(iters)
+    dls.set_leaf(net_leaf_fn(net, dls)).iterate(iters)
     combined = _combined_avg(oracle, dls, turn_nids)
     return {
         "expl_oracle_bb": oracle.exploitability(),
