@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import pytest
+
 from pokerlab.hh.ggpoker import parse_ggpoker
 from pokerlab.hh.pokerstars import parse_pokerstars
 from pokerlab.hh.population import load_population
@@ -78,3 +80,55 @@ def test_failed_hand_carries_source_hand_id() -> None:
     assert report.total == 0
     assert len(report.failed_hands) == 1
     assert report.failed_hands[0].hand_id == poisoned.hand_id
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 findings [13][14]: the production path replayed hands without ever
+# checking the replay against the history's own stated result, and applied
+# actions without checking whose turn it was — so a desynced action list was
+# silently MISATTRIBUTED to the wrong seat rather than rejected.
+# --------------------------------------------------------------------------- #
+def test_hand_whose_replay_contradicts_the_history_is_not_graded() -> None:
+    """[13] If the engine and the HH disagree, the hand is untrustworthy."""
+    good = _session()
+    ph = parse_pokerstars((FIXTURES / "ps_multiway_flop.txt").read_text())
+    # doctor the stated result: claim the hero collected 1 chip more
+    collected = list(ph.collected)
+    collected[ph.hero] += 1
+    doctored = dataclasses.replace(ph, collected=tuple(collected))
+
+    report = grade_session(good + [doctored], population=load_population())
+
+    clean = grade_session(good, population=load_population())
+    assert report.total == clean.total          # nothing from the bad hand
+    assert report.failed_hand_count == 1
+    assert "reconcil" in report.failed_hands[0].reason.lower()
+
+
+def test_desynced_action_list_is_rejected_not_misattributed() -> None:
+    """[14] An action for the wrong seat must raise, not silently reassign."""
+    ph = parse_pokerstars((FIXTURES / "ps_multiway_flop.txt").read_text())
+    n = len(ph.setup.stacks)
+    first_seat, first_action = ph.actions[0]
+    desynced = dataclasses.replace(
+        ph, actions=[((first_seat + 1) % n, first_action)] + list(ph.actions))
+
+    report = grade_session([desynced], population=load_population())
+
+    assert report.total == 0
+    assert report.failed_hand_count == 1
+    assert "to_act" in report.failed_hands[0].reason
+
+
+def test_seat_guard_raises_from_extract_decisions() -> None:
+    """[14] The guard lives at the apply boundary, so every caller gets it."""
+    from pokerlab.hh.decisions import extract_decisions
+
+    ph = parse_pokerstars((FIXTURES / "ps_multiway_flop.txt").read_text())
+    n = len(ph.setup.stacks)
+    first_seat, first_action = ph.actions[0]
+    desynced = dataclasses.replace(
+        ph, actions=[((first_seat + 1) % n, first_action)] + list(ph.actions))
+
+    with pytest.raises(ValueError, match="to_act"):
+        extract_decisions(desynced)

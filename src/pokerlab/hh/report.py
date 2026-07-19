@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from pokerlab.hh.decisions import Decision, extract_decisions
+from pokerlab.hh.decisions import Decision, extract_decisions, reconcile
 from pokerlab.hh.grade import Grading, grade_decision
 from pokerlab.hh.model import ParsedHand
 from pokerlab.hh.population import Population
@@ -98,6 +98,10 @@ def grade_session(
         # (bad amounts, desynced action lists, seat mismatches). A hand that
         # cannot be replayed is reported and skipped, never fatal.
         try:
+            # Reconcile before grading: a hand whose replay contradicts its own
+            # stated result is not understood, so nothing it produces is
+            # trustworthy (round-1 finding [13]).
+            reconcile(ph)
             decisions = extract_decisions(ph)
         except Exception as exc:  # noqa: BLE001 - isolation boundary
             report.failed_hands.append(

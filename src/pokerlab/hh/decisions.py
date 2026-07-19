@@ -154,5 +154,40 @@ def extract_decisions(parsed: ParsedHand) -> list[Decision]:
                 game_state=dataclasses.replace(hand.game_state, tournament=tc),
             ))
             k += 1
+        # Seat guard (round-1 finding [14]): the engine applies an action to
+        # whoever is to act, so a desynced action list would be silently
+        # MISATTRIBUTED — the hero graded on someone else's decision. Refuse.
+        if hand.to_act != seat:
+            raise ValueError(
+                f"action list desynced: hand.to_act={hand.to_act} but the "
+                f"history's next action is seat {seat} ({action!r})")
         hand.apply(action)
     return out
+
+
+def reconcile(parsed: ParsedHand) -> None:
+    """Verify a replay against the result the history itself states.
+
+    The engine independently recomputes side pots, uncalled returns and the
+    showdown split; if that disagrees with the HH's own SUMMARY the hand is not
+    understood and must not be graded (round-1 finding [13]). Raises ValueError
+    on any mismatch — callers isolate it per hand (see `hh.report`).
+    """
+    hand = Hand(parsed.setup)
+    for seat, action in parsed.actions:
+        if hand.to_act != seat:
+            raise ValueError(
+                f"action list desynced: hand.to_act={hand.to_act} but the "
+                f"history's next action is seat {seat} ({action!r})")
+        hand.apply(action)
+    if not hand.is_terminal():
+        raise ValueError("reconciliation failed: replay did not reach a terminal state")
+    final = tuple(hand.final_stacks())
+    stated = parsed.stated_final_stacks()
+    if final != stated:
+        raise ValueError(
+            f"reconciliation failed: engine final stacks {final} != stated {stated}")
+    pot = sum(hand.contrib) - parsed.uncalled
+    if pot != parsed.total_pot:
+        raise ValueError(
+            f"reconciliation failed: engine pot {pot} != stated {parsed.total_pot}")
