@@ -20,7 +20,7 @@ def _due_after(state, days):
 
 
 def test_first_correct_review_schedules_one_day():
-    st = sch.review(sch.initial_state("SBjam:10bb", NOW), correct=True, now=NOW)
+    st = sch.review(sch.initial_state("SBjam|preflop|jam|10", NOW), correct=True, now=NOW)
     assert st.reps == 1
     assert st.interval_days == 1.0
     assert st.easiness == pytest.approx(2.6)      # 2.5 + 0.1
@@ -28,7 +28,7 @@ def test_first_correct_review_schedules_one_day():
 
 
 def test_second_correct_review_schedules_six_days():
-    st = sch.initial_state("SBjam:10bb", NOW)
+    st = sch.initial_state("SBjam|preflop|jam|10", NOW)
     st = sch.review(st, True, NOW)                # reps 1
     st = sch.review(st, True, NOW)                # reps 2
     assert st.reps == 2 and st.interval_days == 6.0
@@ -36,7 +36,7 @@ def test_second_correct_review_schedules_six_days():
 
 
 def test_third_correct_review_scales_by_easiness():
-    st = sch.initial_state("SBjam:10bb", NOW)
+    st = sch.initial_state("SBjam|preflop|jam|10", NOW)
     for _ in range(3):
         st = sch.review(st, True, NOW)
     assert st.reps == 3
@@ -46,7 +46,7 @@ def test_third_correct_review_scales_by_easiness():
 
 
 def test_wrong_answer_resets_reps_and_lowers_easiness():
-    st = sch.initial_state("SBjam:10bb", NOW)
+    st = sch.initial_state("SBjam|preflop|jam|10", NOW)
     for _ in range(3):
         st = sch.review(st, True, NOW)            # build up reps
     before_ef = st.easiness
@@ -76,12 +76,12 @@ def test_next_due_orders_by_due_date():
 
 def test_schedule_attempt_persists_state():
     conn = db.connect(":memory:")
-    st = sch.schedule_attempt(conn, "SBjam:10bb", correct=True, now=NOW)
-    row = db.get_sr_state(conn, "SBjam:10bb")
+    st = sch.schedule_attempt(conn, "SBjam|preflop|jam|10", correct=True, now=NOW)
+    row = db.get_sr_state(conn, "SBjam|preflop|jam|10")
     assert row["reps"] == 1 and row["reps"] == st.reps
     # a second attempt updates the same row in place
-    sch.schedule_attempt(conn, "SBjam:10bb", correct=True, now=NOW)
-    assert db.get_sr_state(conn, "SBjam:10bb")["reps"] == 2
+    sch.schedule_attempt(conn, "SBjam|preflop|jam|10", correct=True, now=NOW)
+    assert db.get_sr_state(conn, "SBjam|preflop|jam|10")["reps"] == 2
     assert len(db.all_sr_state(conn)) == 1
 
 
@@ -89,14 +89,14 @@ def test_select_next_prefers_worst_error_rate_among_due():
     conn = db.connect(":memory:")
     # two categories, both due now; SBjam has the worse error rate.
     for ok in (0, 0, 0, 1):
-        db.insert_drill_attempt(conn, "SBjam:10bb", "jamfold", "fold",
+        db.insert_drill_attempt(conn, "SBjam|preflop|jam|10", "jamfold", "fold",
                                 bool(ok), 0.0, "2026-07-19T00:00:00")
     for ok in (1, 1, 1, 0):
-        db.insert_drill_attempt(conn, "BBcall:10bb", "jamfold", "fold",
+        db.insert_drill_attempt(conn, "BBcall|preflop|call|10", "jamfold", "fold",
                                 bool(ok), 0.0, "2026-07-19T00:00:00")
-    for key in ("SBjam:10bb", "BBcall:10bb"):
+    for key in ("SBjam|preflop|jam|10", "BBcall|preflop|call|10"):
         db.upsert_sr_state(conn, key, 2.5, 0.0, 0, NOW.isoformat())  # due now
-    assert sch.select_next(conn, NOW) == "SBjam:10bb"
+    assert sch.select_next(conn, NOW) == "SBjam|preflop|jam|10"
 
 
 def test_select_next_none_when_no_history():

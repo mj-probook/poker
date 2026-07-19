@@ -79,5 +79,5 @@ def test_update_is_pure_bayes_multiplication_on_reach():
 
 def test_feature_vector_has_documented_shape():
     feats = PBS.initial().features()
-    # 3 one-hot pot levels + 2*6 reach entries = 15.
-    assert feats.shape == (15,)
+    # 5 one-hot betting lines + 2*6 reach entries = 17.
+    assert feats.shape == (17,)

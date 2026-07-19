@@ -4,7 +4,8 @@ Replays a `ParsedHand` through the Slice-A engine and snapshots the game state
 at every point where the hero is to act. Each `Decision` carries exactly what
 the tier router and the graders need: street, players-in-pot, effective stack,
 pot, the hero's hole/board, the legal set, and the chosen action — plus the
-routed tier and the `leak_key` coordinates (formation | street | action_type).
+routed tier and the raw `formation`/`street`/`action_type` fields the grader
+turns into a canonical `leak_key` category (see `drills.categories`).
 """
 
 from __future__ import annotations
@@ -68,10 +69,9 @@ class Decision:
     tier: int
     formation: str
     action_type: str
-
-    @property
-    def leak_key(self) -> str:
-        return f"{self.formation}|{self.street}|{self.action_type}"
+    # The persisted leak_key is the canonical category (drills.categories),
+    # assigned by the grader — jam/fold spots gain a depth bucket, so it is not
+    # a pure function of these raw fields (see hh.grade).
 
 
 def _action_type(chosen: Action, is_allin: bool) -> str:

@@ -34,7 +34,7 @@ def test_get_next_icm_spot_carries_tournament(client):
     # Answering an ICM drill seeds its category into the scheduler; the next
     # spot then comes from that ICM category and must carry TournamentContext.
     client.post("/api/drill/answer",
-                json={"drill_id": "SBjam.icm:10bb:AA", "action": "jam"})
+                json={"drill_id": "SBjam.icm|preflop|jam|10:AA", "action": "jam"})
     spot = client.get("/api/drill/next").json()
     assert spot["kind"] == "icm"
     assert spot["tournament"] is not None
@@ -44,7 +44,7 @@ def test_get_next_icm_spot_carries_tournament(client):
 
 def test_answer_scores_and_persists(client):
     r = client.post("/api/drill/answer",
-                    json={"drill_id": "SBjam:10bb:AA", "action": "jam"})
+                    json={"drill_id": "SBjam|preflop|jam|10:AA", "action": "jam"})
     assert r.status_code == 200
     body = r.json()
     assert body["correct"] is True
@@ -53,12 +53,12 @@ def test_answer_scores_and_persists(client):
     # attempt was persisted to drill_attempts
     con = sqlite3.connect(client.db_path)
     rows = con.execute("SELECT spot_key, correct FROM drill_attempts").fetchall()
-    assert rows == [("SBjam:10bb", 1)]
+    assert rows == [("SBjam|preflop|jam|10", 1)]
 
 
 def test_answer_incorrect_reports_ev_loss(client):
     r = client.post("/api/drill/answer",
-                    json={"drill_id": "SBjam:10bb:AA", "action": "fold"})
+                    json={"drill_id": "SBjam|preflop|jam|10:AA", "action": "fold"})
     body = r.json()
     assert body["correct"] is False
     assert body["ev_loss_bb"] > 0
@@ -67,13 +67,13 @@ def test_answer_incorrect_reports_ev_loss(client):
 
 def test_answer_unknown_drill_id_is_404(client):
     r = client.post("/api/drill/answer",
-                    json={"drill_id": "SBjam:10bb:ZZ", "action": "jam"})
+                    json={"drill_id": "SBjam|preflop|jam|10:ZZ", "action": "jam"})
     assert r.status_code == 404
 
 
 def test_answer_illegal_action_is_400(client):
     r = client.post("/api/drill/answer",
-                    json={"drill_id": "SBjam:10bb:AA", "action": "raise"})
+                    json={"drill_id": "SBjam|preflop|jam|10:AA", "action": "raise"})
     assert r.status_code == 400
 
 

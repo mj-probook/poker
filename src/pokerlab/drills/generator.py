@@ -23,6 +23,7 @@ import numpy as np
 from pokerlab.charts import hands, jamfold_range
 from pokerlab.charts.equity import load_equity_matrix
 from pokerlab.charts.jamfold import icm_model, joint_prior, solve_jamfold_icm
+from pokerlab.drills.categories import jamfold_category
 from pokerlab.types import Solution, TournamentContext
 
 DEPTHS: tuple[int, ...] = (5, 8, 10, 15, 20)
@@ -37,7 +38,6 @@ BUBBLE = TournamentContext(
     ante=0,
 )
 
-_FORMATION = {"SB": "SBjam", "BB": "BBcall"}
 _ACTIONS: dict[str, tuple[str, ...]] = {"SB": ("jam", "fold"), "BB": ("call", "fold")}
 
 
@@ -52,7 +52,7 @@ class Drill:
     hand_label: str               # 169-class label, e.g. "AKs"
     solution: Solution
     pot_bb: float                 # pot the decision plays for (decision-ε input)
-    spot_key: str                 # category key: "<formation>:<depth>bb"
+    spot_key: str                 # canonical category (drills.categories)
     legal_actions: tuple[str, ...]
     description: str
     tournament: TournamentContext | None = None
@@ -77,7 +77,7 @@ def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
     for pos in ("SB", "BB"):
         for d in depths:
             rng = jamfold_range(pos, float(d))
-            spot_key = f"{_FORMATION[pos]}:{int(d)}bb"
+            spot_key = jamfold_category(pos, float(d))
             pot = 2.0 * float(d)
             for hand in hands.HAND_CLASSES:
                 out.append(Drill(
@@ -140,7 +140,7 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
     pot = 2.0 * depth
     out: list[Drill] = []
     for pos, sols in (("SB", sb_sol), ("BB", bb_sol)):
-        spot_key = f"{_FORMATION[pos]}.icm:{int(depth)}bb"
+        spot_key = jamfold_category(pos, depth, icm=True)
         for hand in hands.HAND_CLASSES:
             out.append(Drill(
                 drill_id=f"{spot_key}:{hand}", kind="icm", position=pos,

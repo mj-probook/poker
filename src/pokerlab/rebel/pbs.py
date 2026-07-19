@@ -26,6 +26,18 @@ NUM_CARDS = 6
 RANKS = ("J", "Q", "K")
 # Pot sizes at which round-1 betting closes into round 2 (contribs 1/1, 3/3, 5/5).
 POT_LEVELS = (2, 6, 10)
+# The five round-1 betting lines that reach round 2, by public betting history.
+# The line — not just the pot — is part of the public state: σ*'s round-2 play is
+# indexed by the full history, so the value function differs across lines that
+# share a pot. The net must see the line, hence it is one-hot in the features.
+LEAF_LINES = (
+    (1, 1),          # check-check                (pot 2)
+    (2, 1),          # raise-call                 (pot 6)
+    (1, 2, 1),       # check-raise-call           (pot 6)
+    (2, 2, 1),       # raise-raise-call           (pot 10)
+    (1, 2, 2, 1),    # check-raise-raise-call     (pot 10)
+)
+_LINE_INDEX = {b: i for i, b in enumerate(LEAF_LINES)}
 
 
 def _deal_prior() -> np.ndarray:
@@ -89,6 +101,9 @@ class PBS:
 
     # -- value-net features -------------------------------------------------- #
     def features(self) -> np.ndarray:
-        pot = self.contrib[0] + self.contrib[1]
-        onehot = np.array([1.0 if pot == lvl else 0.0 for lvl in POT_LEVELS])
+        """One-hot betting line (5) + both reach vectors (12) = 17 dims."""
+        onehot = np.zeros(len(LEAF_LINES))
+        idx = _LINE_INDEX.get(tuple(self.bets))
+        if idx is not None:
+            onehot[idx] = 1.0
         return np.concatenate([onehot, self.reach[0], self.reach[1]])

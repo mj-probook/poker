@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pokerlab.charts.jamfold import jamfold_range
+from pokerlab.drills.categories import jamfold_category, postflop_category
 from pokerlab.drills.scoring import score
 from pokerlab.hh.decisions import Decision, hand_label
 from pokerlab.hh.population import Population
@@ -74,28 +75,33 @@ def _chart_action(d: Decision, pos: str) -> str | None:
 def grade_tier1(d: Decision) -> Grading:
     pos = _jamfold_position(d)
     if pos is None:
+        # preflop but off-chart (e.g. deep 3-bet): canonical postflop-style key,
+        # keyed by the hero's action, no depth bucket.
         return Grading(d.index, TIER_CHART, d.action_type, None, None, None,
-                       d.leak_key, graded=False,
+                       postflop_category(d.formation, d.street, d.action_type),
+                       graded=False,
                        note="preflop but not a chart-modelled jam/fold spot")
+    leak_key = jamfold_category(pos, d.eff_bb)  # depth-bucketed spot category
     ca = _chart_action(d, pos)
     if ca is None:
         return Grading(d.index, TIER_CHART, d.action_type, None, None, None,
-                       d.leak_key, graded=False, note="off-chart action")
+                       leak_key, graded=False, note="off-chart action")
     sol = jamfold_range(pos, d.eff_bb, d.ante_bb)[hand_label(d.hole)]
     sc = score(sol, ca, d.pot_bb)
     return Grading(d.index, TIER_CHART, ca, sc.best_action, sc.ev_loss_bb,
-                   sc.correct, d.leak_key, graded=True,
+                   sc.correct, leak_key, graded=True,
                    frequency=sc.chosen_frequency)
 
 
 def grade_tier2(d: Decision, solution: Solution | None) -> Grading:
+    leak_key = postflop_category(d.formation, d.street, d.action_type)
     if solution is None:
         return Grading(d.index, TIER_SOLVER, d.action_type, None, None, None,
-                       d.leak_key, graded=False,
+                       leak_key, graded=False,
                        note="no solution in library — queued for solve")
     sc = score(solution, d.action_type, d.pot_bb)
     return Grading(d.index, TIER_SOLVER, d.action_type, sc.best_action,
-                   sc.ev_loss_bb, sc.correct, d.leak_key, graded=True,
+                   sc.ev_loss_bb, sc.correct, leak_key, graded=True,
                    frequency=sc.chosen_frequency)
 
 
@@ -115,8 +121,8 @@ def grade_tier3(d: Decision, population: Population) -> Grading:
         flags.append("freq_deviation")
         note = f"population plays {d.action_type} only {freq:.0%} here"
     return Grading(d.index, TIER_BEST_AVAILABLE, d.action_type, None, None, None,
-                   d.leak_key, graded=True, frequency=freq,
-                   flags=flags, note=note)
+                   postflop_category(d.formation, d.street, d.action_type),
+                   graded=True, frequency=freq, flags=flags, note=note)
 
 
 def grade_decision(d: Decision, *, population: Population,

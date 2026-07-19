@@ -92,8 +92,10 @@ def test_leak_report_ranks_tiers_1_2_and_lists_tier3_separately() -> None:
 
     leaks = hh_leak_report(conn, limit=5)
     assert leaks, "expected ranked leaks"
-    # the SB open-fold of A7o at 10bb is the biggest leak in the session
-    assert leaks[0]["leak_key"] == "2max:SB|preflop|fold"
+    # the SB open-fold of A7o at 10bb is the biggest leak in the session; its
+    # canonical category is the SB-jam 10bb SPOT (the hero's fold does not
+    # change the category — that is what lets it join the drill of the same key)
+    assert leaks[0]["leak_key"] == "SBjam|preflop|jam|10"
     assert leaks[0]["ev_loss_per_100"] > 100  # ~114 bb/100
     # ranking is monotone non-increasing in the stated metric
     metric = [row["ev_loss_per_100"] for row in leaks]

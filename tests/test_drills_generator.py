@@ -26,7 +26,7 @@ def test_jamfold_population_covers_syllabus():
 
 def test_jamfold_drill_carries_chart_solution():
     drills = {d.drill_id: d for d in gen.jamfold_drills()}
-    d = drills["SBjam:10bb:AKs"]
+    d = drills["SBjam|preflop|jam|10:AKs"]
     assert d.kind == "jamfold" and d.tournament is None
     assert d.solution.source == "chart"
     assert d.solution.actions == jamfold_range("SB", 10)["AKs"].actions

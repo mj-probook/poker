@@ -20,9 +20,9 @@ import numpy as np
 import torch
 from torch import nn
 
-from .pbs import NUM_CARDS, POT_LEVELS, PBS
+from .pbs import LEAF_LINES, NUM_CARDS, PBS
 
-FEAT_DIM = len(POT_LEVELS) + 2 * NUM_CARDS   # 3 + 12 = 15
+FEAT_DIM = len(LEAF_LINES) + 2 * NUM_CARDS   # 5 + 12 = 17
 OUT_DIM = 2 * NUM_CARDS                       # 12
 
 

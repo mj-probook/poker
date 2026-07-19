@@ -57,4 +57,9 @@ def test_jam_decision_is_preflop_tier1_allin() -> None:
     assert d.tier == TIER_CHART and d.position == "SB"
     assert d.is_allin and d.action_type == "jam"
     assert round(d.eff_bb) == 15
-    assert d.leak_key == "2max:SB|preflop|jam"
+    assert d.formation == "2max:SB"
+    # the persisted (canonical) leak_key is assigned by the grader:
+    from pokerlab.drills.categories import jamfold_category
+    from pokerlab.hh.grade import grade_tier1
+    assert grade_tier1(d).leak_key == jamfold_category("SB", d.eff_bb)
+    assert grade_tier1(d).leak_key == "SBjam|preflop|jam|15"

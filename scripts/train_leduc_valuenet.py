@@ -36,11 +36,11 @@ from pokerlab.rebel.valuenet import net_leaf_value_fn, train_valuenet
 DEFAULT_DATA = Path("artifacts/leduc_pbs_dataset.npz")
 
 
-def _load_or_generate(path: Path, n_per_state: int, seed: int, regen: bool):
+def _load_or_generate(path: Path, n_per_line: int, seed: int, regen: bool):
     if path.exists() and not regen:
         d = np.load(path)
         return d["features"], d["targets"]
-    x, y = generate_dataset(n_per_state=n_per_state, seed=seed)
+    x, y = generate_dataset(n_per_line=n_per_line, seed=seed)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, features=x, targets=y)
     return x, y
@@ -48,7 +48,7 @@ def _load_or_generate(path: Path, n_per_state: int, seed: int, regen: bool):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--n-per-state", type=int, default=400)
+    ap.add_argument("--n-per-line", type=int, default=6000)
     ap.add_argument("--epochs", type=int, default=400)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu", help="cpu (deterministic) or mps")
@@ -60,7 +60,7 @@ def main() -> None:
     args = ap.parse_args()
 
     t0 = time.time()
-    x, y = _load_or_generate(args.dataset, args.n_per_state, args.seed, args.regen)
+    x, y = _load_or_generate(args.dataset, args.n_per_line, args.seed, args.regen)
     print(f"[data] {x.shape[0]} PBS→CFV samples ({time.time() - t0:.1f}s)")
 
     net, rep = train_valuenet(x, y, epochs=args.epochs, seed=args.seed,
@@ -76,18 +76,26 @@ def main() -> None:
     v_full = on_policy_values(full, sigma)[0]
     print(f"[ref ] full CFR+ NashConv={nash_conv(full, sigma):.2e}  root_value={v_full:.4f}")
 
-    # Net-driven depth-limited trunk: does the net's value reproduce the root value?
+    # Amended-A exit: net-driven depth-limited trunk reproduces the root value.
     net_trunk = DepthLimitedSolver(net_leaf_value_fn(net))
     net_trunk.run(args.trunk_iters)
+    round1_net = net_trunk.round1_profile()
     dl_tree = build_tree(DepthLimitedLeducOracle(sigma))
-    v_net = on_policy_values(dl_tree, net_trunk.round1_profile())[0]
-    print(f"[net ] net-driven trunk root_value={v_net:.4f}  |Δ|={abs(v_net - v_full):.4f}")
+    v_net = on_policy_values(dl_tree, round1_net)[0]
+    d_root = abs(v_net - v_full)
+    print(f"[net ] net-driven trunk root_value={v_net:.4f}  |Δ|={d_root:.4f}  "
+          f"({'PASS' if d_root <= 2e-3 else 'above'} 2e-3)")
 
-    # M5 bar: oracle leaves (from the full CFR+ solution) + safe re-solving.
+    # Net-driven trunk + safe-resolve full agent (informational: bounded by the
+    # spurious-round-1 limit of depth-limited solving — see docs/notes).
+    nc_net = nash_conv(full, safe_rebel_agent_profile(
+        round1_net, net_leaf_value_fn(net), resolve_iters=args.resolve_iters))
+    print(f"[net ] net-driven + safe-resolve full-agent NashConv = {nc_net:.5f}")
+
+    # Oracle bar: leaves from the full CFR+ solution + safe re-solving.
     round1 = {k: v for k, v in sigma.items() if "|BNone|" in k}
-    agent = safe_rebel_agent_profile(round1, fixed_continuation_leaf_values(sigma),
-                                     resolve_iters=args.resolve_iters)
-    nc = nash_conv(full, agent)
+    nc = nash_conv(full, safe_rebel_agent_profile(
+        round1, fixed_continuation_leaf_values(sigma), resolve_iters=args.resolve_iters))
     print(f"[M5  ] oracle-leaf + safe-resolve NashConv = {nc:.6f}  "
           f"({'PASS' if nc <= 2e-3 else 'above'} 2e-3)")
     print(f"[done] {time.time() - t0:.1f}s total")
