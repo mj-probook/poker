@@ -1,5 +1,9 @@
 """Hero decision extraction from a parsed hand (Slice F, impl doc §3).
 
+Also owns `reconcile()`: replay-vs-stated validation (engine final stacks and
+pot against the HH SUMMARY) — the gate that decides whether a hand is gradable
+or lands in `SessionReport.failed_hands`.
+
 Replays a `ParsedHand` through the Slice-A engine and snapshots the game state
 at every point where the hero is to act. Each `Decision` carries exactly what
 the tier router and the graders need: street, players-in-pot, effective stack,

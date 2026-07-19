@@ -1,6 +1,6 @@
 """M0 engine: cards, hand evaluation, NLHE state machine, tournament helpers.
 
-Public surface for downstream slices (impl doc §3b). The engine operates on a
+Public surface for downstream slices (plan §3b; impl doc §1). The engine operates on a
 mutable `Hand` state machine; `Hand.game_state` snapshots into the frozen
 `types.GameState` contract that scoring/grading/solvers consume.
 """

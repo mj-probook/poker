@@ -1,9 +1,11 @@
-"""Parsed hand-history model shared by the PokerStars and GGPoker parsers.
+"""Parsed hand-history model shared by the PokerStars and GGPoker parsers (Slice F, impl doc §3).
 
 A `ParsedHand` is the bridge between raw HH text and the Slice-A engine: it
-carries a ready-to-replay `HandSetup` + engine action list, plus the results
-*stated in the HH text* (per-seat contributions, collected amounts, uncalled
-returns, total pot) so a replay can be validated against ground truth.
+carries a ready-to-replay `HandSetup` + engine action list (including the
+per-player-`ante` vs `bb_ante` structure classification — see `hh._common`),
+plus the results *stated in the HH text* (per-seat contributions, collected
+amounts, uncalled returns, total pot) so a replay can be validated against
+ground truth.
 
 Seat convention: HH seats are compacted in ascending seat-number order onto
 engine indices ``0..n-1`` (ascending-with-wraparound == clockwise on both

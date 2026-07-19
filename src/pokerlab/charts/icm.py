@@ -3,7 +3,7 @@
 The Independent Chip Model turns a stack vector into $ equity by assuming the
 probability a player finishes first equals their share of chips in play, applied
 recursively to award each prize place. No vendor data — pure combinatorics, the
-Goal-A exercise the plan wants (§2.2).
+Goal-A exercise the plan wants (§2 build item 2).
 
     icm_equities(stacks, payouts) -> list[float]   # $ equity per player
 

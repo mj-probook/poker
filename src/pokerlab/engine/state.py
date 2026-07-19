@@ -9,6 +9,10 @@ Seat/position convention (matches PokerKit so the differential compares seat
 for seat): for >=3 players seat ``(button+1)%n`` is the SB and ``(button+2)%n``
 the BB; heads-up the button posts the SB. Amounts in an `Action` are the
 resulting *street commitment* ("raise-to"), 0 for fold/check.
+
+Antes: `HandSetup` supports two mutually exclusive structures — per-player
+``ante`` (each dealt-in seat posts) and ``bb_ante`` (the BB seat posts the
+whole ante alone, the modern tournament format); a setup never carries both.
 """
 
 from __future__ import annotations

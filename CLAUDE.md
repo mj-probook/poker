@@ -14,4 +14,4 @@ Personal poker lab: learn game theory + RL by building; train the author for liv
 - Grading honesty is load-bearing: tier 3 (multiway) NEVER reports ev_loss — only frequency-deviation flags. Nothing vendor-derived (GTO Wizard etc.) enters answer keys — in-house chart engine + own solves only.
 - SQLite schema in `store/schema.sql`; derived metrics are queries in `store/views.py`, never tables.
 
-**Module map** (plan §3): `engine` M0 · `cfr` M1 (+ exploitability utility) · `charts` M1.5 · `solver` M3 · `drills`+`web` M2 · `hh` M4 · `rebel` M5/M7 · `env` M6 · `store` persistence.
+**Module map** (plan §3): `engine` M0 · `cfr` M1 (+ exploitability utility) · `charts` M1.5 · `solver` M3 · `drills`+`web` M2 · `hh` M4 · `rebel` M5 · `spike` M7 (+ tier-2 activation) · `env` M6 · `store` persistence.

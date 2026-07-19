@@ -27,7 +27,12 @@ def effective_bb_all(tc: TournamentContext) -> tuple[float, ...]:
 def m_ratio(stack: int, tc: TournamentContext, seats: int) -> float:
     """Harrington M: orbits survivable = stack / (sb + bb + seats*ante).
 
-    ``seats`` is players dealt in per orbit (antes are per-player here).
+    ``seats`` is players dealt in per orbit. BB-ante structures are NOT
+    modelled here: `TournamentContext.ante` is per-player, so for a BB-ante
+    tournament the orbit cost (and hence M) is wrong by ~``seats``× on the
+    ante term. A `TournamentContext` bb_ante field is a frozen-contract
+    change, deliberately deferred until a consumer needs M under BB antes
+    (R2 D17).
     """
     cost = tc.bb + tc.bb // 2 + seats * tc.ante
     if cost <= 0:
