@@ -46,8 +46,6 @@ def test_get_next_icm_spot_carries_tournament(client):
                     json={"drill_id": spot["drill_id"],
                           "action": spot["legal_actions"][0]})
     raise AssertionError("scheduler never served an ICM spot")
-    assert spot["tournament"]["players_remaining"] == 4
-    assert len(spot["tournament"]["payouts"]) == 3
 
 
 def test_answer_scores_and_persists(client):
@@ -135,3 +133,36 @@ def test_repeated_answer_for_one_drill_counts_once(client):
     client.get("/api/drill/next")
     client.post("/api/drill/answer", json=body)
     assert conn.execute("SELECT COUNT(*) FROM drill_attempts").fetchone()[0] == 2
+
+
+def test_one_category_driven_past_the_old_overflow_point(client):
+    """[E41] the docs-reviewer path: hammer a SINGLE category to rep 14+.
+
+    The 300-drill test above rotates across categories, so no single sr_state
+    row climbs far -- it proves coverage, not the cap. This drives one category
+    only, which is the trajectory that actually overflowed (rep 14 raised
+    OverflowError and 500'd). Different hand classes within the one category
+    sidestep the repeat-answer guard, so every POST is a real review.
+    """
+    import sqlite3
+
+    from pokerlab.drills import generator as gen
+
+    cat = "SBjam|preflop|jam|5"
+    drills = [d for d in gen.default_population() if d.spot_key == cat]
+    assert len(drills) >= 30, "need distinct drills in one category"
+
+    for drill in drills[:30]:                       # 30 > the old rep-14 cliff
+        best = max(drill.solution.actions,
+                   key=lambda a: drill.solution.actions[a][0])
+        r = client.post("/api/drill/answer",
+                        json={"drill_id": drill.drill_id, "action": best})
+        assert r.status_code == 200, f"{drill.drill_id}: {r.status_code} {r.text}"
+        client.get("/api/drill/next")               # re-arm the repeat guard
+
+    conn = sqlite3.connect(client.db_path)
+    reps, interval, ef = conn.execute(
+        "SELECT reps, interval_days, easiness FROM sr_state WHERE leak_key=?",
+        (cat,)).fetchone()
+    assert reps == 30                                # all 30 counted
+    assert interval <= 365.0 and ef <= 3.0           # both ceilings held

@@ -1,4 +1,4 @@
-"""Shared hand-history parsing for the PokerStars and GGPoker text formats.
+"""Shared hand-history parsing for PokerStars and GGPoker (Slice F; impl doc §3).
 
 Both sites emit the same body grammar (seat list, blind/ante posts, per-street
 action lines, board reveals, showdown, collected + SUMMARY totals); only the
@@ -10,6 +10,22 @@ engine actions — the engine posts them from `HandSetup`; the action list holds
 only voluntary actions in table order. Board cards are read incrementally: FLOP
 carries three cards in its sole bracket, TURN/RIVER echo the prior board and
 carry the new card in a *second* bracket.
+
+Two table conventions this module is responsible for getting right, because a
+wrong answer to either silently corrupts the replay rather than failing:
+
+* **Ante structure** (`_read_antes`) — a per-player ante is charged to EVERY
+  seat while a big-blind ante is one payment for the table, so misreading one
+  as the other mis-states the pot n-fold. The rule is **BB-ante iff exactly one
+  seat posted an ante AND that seat is the one posting the big blind**; a lone
+  ante from anyone else is per-player. Keying on the poster's identity rather
+  than the number of posters is what makes this correct at both heads-up and
+  3-handed (round-1 finding [12], round-2 finding [E6]).
+
+* **Dead button** (`_button_index`) — when a player busts, the announced button
+  can land on an unoccupied seat. The fallback is the nearest occupied seat
+  counter-clockwise, which keeps the engine's derived SB/BB aligned with the
+  blinds the history actually posts (round-1 finding [9]).
 """
 
 from __future__ import annotations
