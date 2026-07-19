@@ -185,10 +185,21 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             missed += 1
             continue
         g = grade_tier2(d, solution)
-        db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
-                          # '' = no single best action (see persist_session)
-                          g.best or "", g.ev_loss, g.leak_key, graded_at)
-        db.set_batch_status(conn, row["id"], "done")
+        # The grading and the row's 'done' mark are ONE transaction: a crash
+        # between them would otherwise leave the row 'running' with its grading
+        # already stored, and recovery would reopen it for a second, duplicate
+        # grading. Committing them together means that state cannot exist, so
+        # recovery stays safe as written (wave-2 [E14]).
+        try:
+            db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
+                              # '' = no single best action (see persist_session)
+                              g.best or "", g.ev_loss, g.leak_key, graded_at,
+                              commit=False)
+            db.set_batch_status(conn, row["id"], "done", commit=False)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         done += 1
     return {"done": done, "missed": missed, "unsolvable": unsolvable,
             "failed": failed, "recovered": recovered}

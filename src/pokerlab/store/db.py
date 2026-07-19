@@ -201,8 +201,12 @@ def retry_failed_batch(conn: sqlite3.Connection) -> int:
     return int(cur.rowcount)
 
 
-def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str) -> None:
+def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str, *,
+                     commit: bool = True) -> None:
+    """Set a row's status. ``commit=False`` lets a caller bind the status to the
+    write it describes in one transaction (see `hh.persist.drain_batch_queue`)."""
     if status not in ("pending", "running", "done", "failed"):
         raise ValueError(f"bad batch status {status!r}")
     conn.execute("UPDATE batch_queue SET status=? WHERE id=?", (status, row_id))
-    conn.commit()
+    if commit:
+        conn.commit()

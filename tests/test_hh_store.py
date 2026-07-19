@@ -332,3 +332,75 @@ def test_failed_rows_can_be_deliberately_reopened() -> None:
     assert reopened == counts["queued"]
     result = drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
     assert result["done"] == counts["queued"]
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E14]: the drain wrote the grading in one commit and the row status in
+# the next. A crash between them left the row 'running' with its grading already
+# stored; recover_running_batch then reopened it and the next drain inserted a
+# SECOND grading for the same decision — double-counting into exactly the leak
+# stats [11]'s dedup exists to protect. The two writes must be one transaction.
+# --------------------------------------------------------------------------- #
+def test_grading_and_row_status_commit_atomically() -> None:
+    conn, _report, counts = _persisted_session()
+    # the session's own tier-1/3 gradings are already stored; only tier-2 rows
+    # come from the drain, so those are what must not survive
+    before = [g for g in db.gradings(conn) if g["tier"] == 2]
+    assert before == []
+
+    # a crash cannot leave "graded but not marked done": if the status write is
+    # made to fail, the grading must roll back with it
+    real_status = db.set_batch_status
+
+    def exploding_status(c, row_id, status, **kw):
+        if status == "done":
+            raise RuntimeError("crash after grading, before status")
+        return real_status(c, row_id, status, **kw)
+
+    import pokerlab.hh.persist as persist_mod
+    orig = persist_mod.db.set_batch_status
+    persist_mod.db.set_batch_status = exploding_status
+    try:
+        drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
+    except RuntimeError:
+        pass
+    finally:
+        persist_mod.db.set_batch_status = orig
+
+    after = [g for g in db.gradings(conn) if g["tier"] == 2]
+    assert after == [], "grading must not survive a failed status write"
+
+
+def test_recovery_after_a_crash_does_not_double_count() -> None:
+    """The end-to-end shape of [E14]: crash mid-row, recover, drain again.
+
+    Atomicity is what makes this safe, so the crash is simulated in the only
+    state that can now exist: the row is 'running' and its grading was NOT
+    committed. (Before the fix, the reachable state was 'running' *with* a
+    committed grading, and recovery then produced a second one.)
+    """
+    conn, _report, counts = _persisted_session()
+    row = db.pending_batch(conn)[0]
+    db.set_batch_status(conn, row["id"], "running")   # died mid-row
+
+    result = drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
+
+    assert result["recovered"] == 1
+    assert result["done"] == counts["queued"]
+    per_decision: dict[tuple[int, int], int] = {}
+    for g in db.gradings(conn):
+        key = (g["hand_id"], g["decision_idx"])
+        per_decision[key] = per_decision.get(key, 0) + 1
+    assert max(per_decision.values()) == 1, "a decision was graded twice"
+
+
+def test_a_completed_row_is_never_redrained() -> None:
+    """'done' rows are outside the drain's selection, so replays cannot stack."""
+    conn, _report, counts = _persisted_session()
+    drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
+    baseline = len(db.gradings(conn))
+
+    again = drain_batch_queue(conn, lambda s, d: _STUB_SOLUTION, graded_at=AT)
+
+    assert again["done"] == 0 and again["recovered"] == 0
+    assert len(db.gradings(conn)) == baseline
