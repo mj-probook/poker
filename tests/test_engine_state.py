@@ -127,3 +127,51 @@ def test_replay_reconstructs_terminal_state() -> None:
     assert replayed.is_terminal() == h.is_terminal()
     assert replayed.final_stacks() == h.final_stacks()
     assert replayed.payoffs() == h.payoffs()
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E1]: a betting round with nobody to bet against is CLOSED. The engine
+# kept the last live player in the queue and demanded a ('check', 0) no-op —
+# an action no real hand history records, so replaying a legitimate short-stack
+# hand stalled short of terminal and hh.reconcile dropped it.
+#
+# The gap was preflop only: _advance_street already closed postflop streets
+# whose can-act count fell below two.
+# --------------------------------------------------------------------------- #
+def test_preflop_closes_when_the_blind_puts_the_only_opponent_allin() -> None:
+    """HU: BB has less than a big blind, so posting it puts them all-in.
+
+    The SB then faces no outstanding wager and has nobody who can call, so
+    there is no decision to make and the hand should run out.
+    """
+    h = new_hand([48, 5686], button=1, bb=100, sb=50,
+                 hole=_hole(("Ah", "Kd"), ("Qc", "Jc")),
+                 board=_board("2c", "7d", "9h", "Ts", "3s"))
+    assert h.allin[0] and not h.allin[1]
+    assert h.to_act is None, "no player has a decision to make here"
+    assert h.is_terminal(), "the hand should run out, not demand a no-op check"
+
+
+def test_preflop_still_asks_the_lone_player_who_owes_a_call() -> None:
+    """The case a naive 'one player left -> close' guard breaks.
+
+    Facing an all-in that exceeds their blind, the last live player owes a
+    wager and MUST still get fold/call — closing here would silently fold them.
+    """
+    h = new_hand([5000, 3000], button=1, bb=100, sb=50,
+                 hole=_hole(("Ah", "Kd"), ("Qc", "Jc")),
+                 board=_board("2c", "7d", "9h", "Ts", "3s"))
+    h.apply(("allin", 3000))          # SB/button jams
+    assert h.to_act == 0, "the BB still has a real decision"
+    assert not h.is_terminal()
+    labels = {a[0] for a in h.legal_actions()}
+    assert "fold" in labels and ("call" in labels or "allin" in labels)
+
+
+def test_multiway_preflop_closes_when_only_one_can_act_and_owes_nothing() -> None:
+    h = new_hand([870, 10, 7, 35], button=3, bb=100, sb=50,
+                 hole=[None, None, None, None],
+                 board=_board("2c", "7d", "9h", "Ts", "3s"))
+    # every short stack is all-in from its blind/ante; nobody can be bet against
+    if sum(not h.allin[i] for i in range(4)) <= 1:
+        assert h.to_act is None or h.current_bet - h.street_bet[h.to_act] > 0

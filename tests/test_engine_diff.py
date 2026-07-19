@@ -14,7 +14,7 @@ on any *substantive* disagreement.
 
 import pytest
 
-from tests.diff_harness import run_differential
+from tests.diff_harness import run_differential, short_stack_setup
 
 # ~0.2% of random hands hit the odd-chip-placement quirk; keep a safety ceiling.
 _QUIRK_CEILING = 0.01
@@ -34,9 +34,43 @@ def test_differential_vs_pokerkit_20k() -> None:
     )
 
 
+def test_differential_vs_pokerkit_short_stacks_20k() -> None:
+    """Wave-2 [E1]: the same oracle over hands with sub-blind stacks.
+
+    `random_setup` floors every stack at 2bb, so it never generates a hand where
+    a blind or ante puts a player all-in before anyone acts. That blind spot hid
+    a real close-out bug: the engine kept offering a check to a player whose only
+    live opponent was already all-in. The 20k baseline above was green throughout
+    (0/4000 on a targeted probe); this generator caught it at 312/4000 (7.8%).
+
+    A player short of a blind is routine in MTTs, so this generator is pinned as
+    a permanent second axis of the M0 exit rather than a one-off probe.
+    """
+    exact, oddchip, mismatches = run_differential(20_000, setup_fn=short_stack_setup)
+    total = exact + oddchip + len(mismatches)
+    assert total == 20_000
+    assert not mismatches, (
+        f"{len(mismatches)} substantive PokerKit disagreements (bugs):\n"
+        + "\n".join(mismatches[:5])
+    )
+    assert oddchip <= total * _QUIRK_CEILING
+
+
 @pytest.mark.slow
 def test_differential_vs_pokerkit_1m() -> None:
     exact, oddchip, mismatches = run_differential(1_000_000)
+    total = exact + oddchip + len(mismatches)
+    assert total == 1_000_000
+    assert not mismatches, (
+        f"{len(mismatches)} substantive PokerKit disagreements (bugs):\n"
+        + "\n".join(mismatches[:10])
+    )
+    assert oddchip <= total * _QUIRK_CEILING
+
+
+@pytest.mark.slow
+def test_differential_vs_pokerkit_short_stacks_1m() -> None:
+    exact, oddchip, mismatches = run_differential(1_000_000, setup_fn=short_stack_setup)
     total = exact + oddchip + len(mismatches)
     assert total == 1_000_000
     assert not mismatches, (

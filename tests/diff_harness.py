@@ -58,6 +58,36 @@ def random_setup(seed: int) -> HandSetup:
                      ante=ante, hole=hole, board=board)
 
 
+def short_stack_setup(seed: int) -> HandSetup:
+    """A seeded random hand that DELIBERATELY includes sub-blind stacks.
+
+    `random_setup` pins every stack at >= 2bb to dodge the ante/blind-trimming
+    edge — which also means it never generates the states where a blind or ante
+    puts a player all-in before anyone acts. That blind spot hid wave-2 [E1]:
+    with stacks >= 2bb the engine and PokerKit never disagreed (0/4000), and
+    with sub-blind stacks they disagreed on 312/4000 (7.8%).
+
+    Those states are not exotic — a player short of a blind is routine in the
+    MTT hands this project exists to grade, so they belong in the oracle.
+    """
+    rng = random.Random(seed)
+    n = rng.randint(2, 6)
+    ante = rng.choice([0, 0, 10, 25])
+    stacks = []
+    for _ in range(n):
+        if rng.random() < 0.45:            # short: at or below one big blind
+            stacks.append(rng.randint(5, 2 * BB))
+        else:
+            stacks.append(rng.randint(2 * BB, 60 * BB))
+    button = 1 if n == 2 else n - 1
+    deck = Deck((seed * 2654435761) & 0xFFFFFFFF)
+    cards = deck.deal(2 * n + 5)
+    hole = tuple((cards[2 * i], cards[2 * i + 1]) for i in range(n))
+    board = tuple(cards[2 * n : 2 * n + 5])
+    return HandSetup(stacks=tuple(stacks), button=button, bb=BB, sb=SB,
+                     ante=ante, hole=hole, board=board)
+
+
 def random_action(hand: Hand, rng: random.Random) -> Action:
     """Pick a random *legal* action, biased toward reaching showdowns while
     still frequently raising/jamming for side-pot coverage."""
@@ -135,8 +165,31 @@ def pokerkit_final_stacks(setup: HandSetup, action_history: list[tuple[int, Acti
         else:  # pragma: no cover
             raise ValueError(f"unknown label {label}")
         drain_board()
+    _drain_forced_checks(s, drain_board)
     drain_board()
     return list(s.stacks)
+
+
+def _drain_forced_checks(s, drain_board) -> None:
+    """Consume PokerKit's vestigial no-op checks so both sides end on a terminal.
+
+    When every remaining opponent is all-in and the last live player owes
+    nothing, that player has no decision: PokerKit reports them as the actor but
+    offers exactly one action -- a check that closes the round and changes
+    nothing. Our engine closes the round outright instead (`_round_has_no_decision`),
+    so it stops emitting actions and PokerKit is left mid-street with chips still
+    in `bets` and the board undealt. Comparing there compares a finished hand to
+    an unfinished one.
+
+    The guard is deliberately strict: we advance ONLY when check is the sole
+    legal action. If PokerKit still offers a fold or a raise, the player had a
+    real decision our engine skipped -- a genuine engine bug -- and it must stay
+    a mismatch rather than be papered over here.
+    """
+    while (s.actor_index is not None and s.can_check_or_call()
+           and not s.can_fold() and not s.can_complete_bet_or_raise_to()):
+        s.check_or_call()
+        drain_board()
 
 
 def _is_odd_chip_only(hand: Hand, mine: list[int], theirs: list[int]) -> bool:
@@ -168,14 +221,18 @@ def _is_odd_chip_only(hand: Hand, mine: list[int], theirs: list[int]) -> bool:
     return all(net == 0 for net in grouped.values())
 
 
-def check_hand(seed: int, action_fn=random_action) -> tuple[str, str]:
+def check_hand(seed: int, action_fn=random_action,
+               setup_fn=random_setup) -> tuple[str, str]:
     """Play + compare one seeded hand.
 
     Returns (status, detail): status is "exact" (stacks identical), "oddchip"
     (identical up to the documented PokerKit odd-chip-placement quirk), or
     "mismatch" (a real discrepancy — an engine bug).
+
+    ``setup_fn`` selects the hand generator, so the same oracle can be pointed
+    at a different slice of the state space (see `short_stack_setup`).
     """
-    setup = random_setup(seed)
+    setup = setup_fn(seed)
     hand = play_engine(setup, seed, action_fn)
     mine = hand.final_stacks()
     theirs = pokerkit_final_stacks(setup, hand.action_history)
@@ -192,7 +249,8 @@ def check_hand(seed: int, action_fn=random_action) -> tuple[str, str]:
     return status, detail
 
 
-def scan_chunk(bounds: tuple[int, int], action_fn=random_action) -> tuple[int, int, list[str]]:
+def scan_chunk(bounds: tuple[int, int], action_fn=random_action,
+               setup_fn=random_setup) -> tuple[int, int, list[str]]:
     """Worker: classify a [lo, hi) seed range -> (exact, oddchip, mismatches)."""
     import warnings
 
@@ -201,7 +259,7 @@ def scan_chunk(bounds: tuple[int, int], action_fn=random_action) -> tuple[int, i
     exact = odd = 0
     mismatches: list[str] = []
     for seed in range(lo, hi):
-        status, detail = check_hand(seed, action_fn)
+        status, detail = check_hand(seed, action_fn, setup_fn)
         if status == "exact":
             exact += 1
         elif status == "oddchip":
@@ -213,7 +271,7 @@ def scan_chunk(bounds: tuple[int, int], action_fn=random_action) -> tuple[int, i
 
 def run_differential(
     n: int, start: int = 0, workers: int | None = None, chunk: int = 400,
-    action_fn=random_action,
+    action_fn=random_action, setup_fn=random_setup,
 ) -> tuple[int, int, list[str]]:
     """Run the PokerKit differential over ``n`` seeded hands across processes.
 
@@ -228,7 +286,7 @@ def run_differential(
     bounds = [(s, min(s + chunk, start + n)) for s in range(start, start + n, chunk)]
     exact = odd = 0
     mismatches: list[str] = []
-    worker = functools.partial(scan_chunk, action_fn=action_fn)
+    worker = functools.partial(scan_chunk, action_fn=action_fn, setup_fn=setup_fn)
     with cf.ProcessPoolExecutor(max_workers=workers) as pool:
         for e, o, m in pool.map(worker, bounds):
             exact += e

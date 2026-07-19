@@ -131,9 +131,30 @@ class Hand:
         self._queue = [i for i in self._order_from(start) if self._active(i)]
         self.to_act = self._queue[0] if self._queue else None
 
+    def _round_has_no_decision(self) -> bool:
+        """True when the current betting round holds no real decision.
+
+        First principles: a bet is only meaningful if somebody can answer it.
+        So a round is over once **no player who can still act faces an
+        outstanding wager** and **fewer than two players can voluntarily commit
+        chips** — the sole survivor has nothing to bet into, and a 'check' from
+        them would be a pure no-op.
+
+        Both halves are load-bearing. Dropping the wager test (the naive "one
+        player left, close it" guard) silently folds a player who is facing an
+        all-in and still owes a call. Dropping the count test would end a normal
+        checked street after its first check (wave-2 [E1]).
+        """
+        if not self._queue:
+            return True
+        if sum(1 for i in range(self.n) if self._active(i)) >= 2:
+            return False
+        return all(self.current_bet - self.street_bet[i] <= 0 for i in self._queue)
+
     def _maybe_close_if_no_action(self) -> None:
-        # If <=1 player can act (all others all-in/folded), skip betting.
-        if self.to_act is None or len(self._queue) == 0:
+        # If nobody has a decision to make (all-in/folded opponents, or nothing
+        # owed and no one to bet against), skip the betting round entirely.
+        if self.to_act is None or self._round_has_no_decision():
             self._advance_street()
 
     # ---- action space ----------------------------------------------------
@@ -272,7 +293,9 @@ class Hand:
             self._finish()
             return
         self.to_act = self._queue[0] if self._queue else None
-        if self.to_act is None:
+        # Also close mid-street once the round stops holding a decision — e.g.
+        # the last opponent just went all-in and the survivor owes nothing.
+        if self.to_act is None or self._round_has_no_decision():
             self._advance_street()
 
     # ---- street transitions ---------------------------------------------
