@@ -231,7 +231,13 @@ def solve_model(model: JamFoldModel, P: np.ndarray, iters: int = 1500) -> tuple:
 
 def model_exploitability(model: JamFoldModel, P: np.ndarray,
                          x: np.ndarray, y: np.ndarray, w: np.ndarray) -> float:
-    """nash_conv/2 in bb (zero-sum models only). Gain = BR value − on-policy."""
+    """Mean per-player best-response gap. Gain = BR value − on-policy.
+
+    For the zero-sum chip model this is nash_conv/2 in bb. For the general-sum
+    ICM model there is no nash_conv, but the same quantity is still the Nash
+    gap (a profile is an equilibrium exactly when no player gains by deviating)
+    — there it reads in ICM $ (finding [20]).
+    """
     v_call, v_fold_bb = _bb_values(model, P, x)
     v_bb = y * v_call + (1.0 - y) * v_fold_bb
     gain_bb = float((np.maximum(v_call, v_fold_bb) - v_bb).sum())
@@ -282,11 +288,17 @@ def solve_jamfold_icm(
                       list(payouts), bb_chips, ante, E)
     x, y, w = solve_model(model, P, iters)
     depth = min(stacks_chips[sb_seat], stacks_chips[bb_seat]) / bb_chips
+    # The ICM game is general-sum, so there is no zero-sum NashConv — but the
+    # per-player best-response gap is still exactly the Nash gap, and it is what
+    # has to be small for these ranges to serve as answer keys for the LIVE M2
+    # bubble drills. Reporting NaN left the solve unverified (finding [20]).
+    # Units are ICM $ (the model's payoff unit), not bb.
+    expl = model_exploitability(model, P, x, y, w)
     return JamFoldSolution(
         depth_bb=float(depth), ante=float(ante), model_name="icm",
         sb_jam=x, bb_call=y, sb_jam_ev=np.zeros(N), sb_fold_ev=model.sbfold_sb,
         bb_call_ev=np.zeros(N), bb_fold_ev=model.bbfold_bb,
-        exploitability=float("nan"),
+        exploitability=expl,
     )
 
 

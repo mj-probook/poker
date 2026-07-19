@@ -35,3 +35,22 @@ def test_bb_still_calls_the_nuts_under_icm():
     # ICM tightens but never folds aces — a sanity floor on the risk premium.
     icm = solve_jamfold_icm((1000, 1000, 1000, 1000), 0, 1, _PAYOUTS, _BB_CHIPS)
     assert icm.bb_call[hands.HAND_INDEX["AA"]] >= 0.99
+
+
+# --------------------------------------------------------------------------- #
+# Round-1 finding [20]: the ICM solve reported exploitability=NaN — i.e. it was
+# never verified at all, while feeding the LIVE M2 bubble drills. The solve is
+# general-sum, so there is no zero-sum "nash_conv"; but the per-player
+# best-response gap IS the Nash gap, and it is exactly what must be small for
+# these ranges to be trustworthy answer keys.
+# --------------------------------------------------------------------------- #
+def test_icm_solve_reports_a_verified_nash_gap():
+    icm = solve_jamfold_icm((1000, 1000, 1000, 1000), 0, 1, _PAYOUTS, _BB_CHIPS)
+    assert icm.exploitability == icm.exploitability, "exploitability is NaN"
+    assert icm.exploitability >= 0.0
+    assert icm.exploitability < 1e-4
+
+
+def test_icm_nash_gap_holds_on_the_pressured_bubble_fixture():
+    icm = solve_jamfold_icm((1500, 1000, 2000, 500), 0, 1, _PAYOUTS, _BB_CHIPS)
+    assert icm.exploitability < 1e-4
