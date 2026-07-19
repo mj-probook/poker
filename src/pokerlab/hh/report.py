@@ -1,7 +1,9 @@
 """Session-level HH grading report (Slice F exit; impl doc §3).
 
-Routes every hero decision in a batch of parsed hands (exit: 100% routed) and
-grades each by tier, then splits the results into:
+Routes every hero decision in a batch of **successfully imported** hands (exit:
+100% of those routed — hands that fail parse/replay are isolated upstream in
+`failed_hands` and never reach routing) and grades each by tier, then splits the
+results into:
 
   * exact  — ev_loss populated (tier 1 chart, tier 2 solved);
   * approx — tier 3 graded against the population table (ev_loss stays None);

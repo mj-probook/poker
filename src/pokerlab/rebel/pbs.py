@@ -11,9 +11,10 @@ joint belief over (P0 card, P1 card) is the deal prior (uniform over the 30
 distinct ordered pairs) times both reach vectors, renormalized with card removal
 (a player cannot hold the public card or the other player's card).
 
-The feature vector (`features()`) is the value net's input: a 3-way one-hot over
-the round-2-entry pot levels {2, 6, 10} plus both reach vectors (2×6). The pot
-alone identifies the continuation game structure; the reaches carry the belief.
+The feature vector (`features()`) is the value net's input: a 5-way one-hot over
+the round-1 betting LINE (see LEAF_LINES — the line, not just the pot, indexes
+σ*'s round-2 play, so lines sharing a pot have different values) plus both reach
+vectors (2×6): 17 dims.
 """
 
 from __future__ import annotations
@@ -24,8 +25,6 @@ import numpy as np
 
 NUM_CARDS = 6
 RANKS = ("J", "Q", "K")
-# Pot sizes at which round-1 betting closes into round 2 (contribs 1/1, 3/3, 5/5).
-POT_LEVELS = (2, 6, 10)
 # The five round-1 betting lines that reach round 2, by public betting history.
 # The line — not just the pot — is part of the public state: σ*'s round-2 play is
 # indexed by the full history, so the value function differs across lines that

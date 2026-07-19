@@ -17,7 +17,7 @@ python.
 uv sync                     # install deps
 uv run pytest               # fast suite (target <60s)
 make soak                   # heavy differentials (1M-hand PokerKit run, etc.)
-make bench                  # milestone-exit benchmarks (full flops25, value nets)
+make bench                  # milestone-exit benchmarks (solver flops25 rivers; value-net heavy runs are in soak)
 ```
 
 Run the drill UI:
