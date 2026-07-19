@@ -82,8 +82,7 @@ def _read_antes(lines: list[str], idx: dict[str, int], n: int) -> tuple[int, int
     if not posts:
         return 0, 0
     if any(is_bb for _, _, is_bb in posts):
-        seat, amt, _ = next(p for p in posts if p[2])
-        return 0, amt
+        return 0, next(amt for _, amt, is_bb in posts if is_bb)
     seats = {seat for seat, _, _ in posts}
     if len(seats) == 1 and n > 2:
         return 0, posts[0][1]
