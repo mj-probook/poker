@@ -98,10 +98,38 @@ def _solution_from_file(solve: dict, hand_cls: str) -> Solution | None:
         source=entry.get("source", "subgame_solver")))
 
 
+def hero_is_oop(d: Decision) -> bool:
+    """True iff the hero acts FIRST postflop among the players still in the pot.
+
+    Postflop order starts at ``(button + 1) % n`` and runs clockwise, so the
+    out-of-position player is simply the first live seat in that order.
+
+    This replaces a `position != "BTN"` guard that was wrong in the most common
+    tier-2 case: heads-up, `position_label` names the button "SB" (it only emits
+    "BTN" for n >= 3), so the guard was ALWAYS true HU and an IP hero got solved
+    and graded against the root — the OOP player's — strategy (wave-2 [E28]).
+    Reading the seat order answers the question directly instead of inferring it
+    from a label.
+    """
+    gs = d.game_state
+    if gs is None:
+        return False
+    n = gs.seats
+    folded = {seat for seat, (label, _) in gs.action_history if label == "fold"}
+    order = ((gs.button + 1 + k) % n for k in range(n))
+    first_live = next((s for s in order if s not in folded), None)
+    return first_live == d.seat
+
+
 def solvable(d: Decision) -> bool:
-    """True iff this is a turn/river spot with the hero as OOP root actor."""
+    """True iff this is a turn/river spot with the hero as OOP root actor.
+
+    The ONE gate for tier-2 solving: every entry point routes through it, so the
+    drain worker and the cache warmer cannot disagree about what is solvable
+    (wave-2 [Q22]).
+    """
     return (d.tier == TIER_SOLVER and d.game_state is not None
-            and len(d.board) >= 4 and d.position != "BTN")
+            and len(d.board) >= 4 and hero_is_oop(d))
 
 
 def solve_decision(d: Decision, *, iters: int = DEFAULT_ITERS,
@@ -114,8 +142,11 @@ def solve_decision(d: Decision, *, iters: int = DEFAULT_ITERS,
     tree = sg.build_tree(tuple(d.board), pot0=pot0, stack=stack, cfg=cfg)
     solver = sg.SubgameSolver(tree, tuple(d.board), sg.uniform_range(),
                               sg.uniform_range(), pot0=pot0)
-    if solver.decisions[0].player != 0:  # hero must be the OOP root actor
-        return None
+    # (A `solver.decisions[0].player != 0` backstop used to sit here as the
+    # "hero must be the OOP root actor" safety net. It is unreachable —
+    # build_tree always starts the root at player 0 — so it never once guarded
+    # the thing it claimed to; measured 0/27 across pot/stack/board variants.
+    # `solvable()` performs that check for real, from the seat order.)
     solver.iterate(iters)
     return solver
 
@@ -140,37 +171,49 @@ def make_inline_solution_for(conn) -> Callable[[Decision], Solution | None]:
     return solution_for
 
 
+def _solve_gated(conn, d: Decision, *, iters: int, cfg: sg.BetConfig,
+                 persist: bool) -> tuple[str, Solution | None] | None:
+    """The ONE tier-2 solve path: gate -> solve -> cache+index -> hero Solution.
+
+    Both public entry points (`make_drain_solver`, `cache_solve`) go through
+    here, so neither can drift from the gate or from each other (wave-2 [Q22]).
+    Returns (spot key, hero Solution) or None when the spot is not solvable.
+    """
+    if not solvable(d):
+        return None
+    try:
+        solved = solve_decision(d, iters=iters, cfg=cfg)
+        if solved is None:
+            return None
+        key = tier2_key(d)
+        if persist:
+            path, expl = write_solve(solved, key)
+            insert_solution_index(conn, key, path, sg.SOLVER_VERSION,
+                                  expl / solved.pot0)
+        return key, _hero_solution(d, solved)
+    except sg.DegenerateRangeError as exc:
+        # No legal hero/villain matchup: re-solving cannot ever help, so this is
+        # terminal for the row rather than a miss to retry — but it must be
+        # visible as "unsolvable", not swallowed (wave-2 [E15][E25]).
+        raise UnsolvableSpot(f"{tier2_key(d)}: {exc}") from exc
+
+
 def make_drain_solver(conn, *, iters: int = DEFAULT_ITERS, cfg: sg.BetConfig = TIER2_CFG,
                       persist: bool = True) -> Callable[[str, Decision], Solution | None]:
     """solver for drain_batch_queue: real solve, cache+index, hero Solution."""
     def solver(spot_key: str, d: Decision) -> Solution | None:
-        if not solvable(d):
-            return None
-        try:
-            solved = solve_decision(d, iters=iters, cfg=cfg)
-            if solved is None:
-                return None
-            if persist:
-                key = tier2_key(d)
-                path, expl = write_solve(solved, key)
-                insert_solution_index(conn, key, path, sg.SOLVER_VERSION,
-                                      expl / solved.pot0)
-            return _hero_solution(d, solved)
-        except sg.DegenerateRangeError as exc:
-            # No legal hero/villain matchup: re-solving cannot ever help, so
-            # this is terminal for the row rather than a miss to retry — but it
-            # must be visible as "unsolvable", not swallowed (wave-2 [E15][E25]).
-            raise UnsolvableSpot(f"{tier2_key(d)}: {exc}") from exc
+        got = _solve_gated(conn, d, iters=iters, cfg=cfg, persist=persist)
+        return None if got is None else got[1]
     return solver
 
 
 def cache_solve(conn, d: Decision, *, iters: int = DEFAULT_ITERS,
                 cfg: sg.BetConfig = TIER2_CFG) -> str | None:
-    """Solve + write + index the decision's spot; return its SpotKey string."""
-    solved = solve_decision(d, iters=iters, cfg=cfg)
-    if solved is None:
-        return None
-    key = tier2_key(d)
-    path, expl = write_solve(solved, key)
-    insert_solution_index(conn, key, path, sg.SOLVER_VERSION, expl / solved.pot0)
-    return key
+    """Solve + write + index the decision's spot; return its cache key.
+
+    Same gate and same solve as the drain worker — it previously bypassed
+    `solvable()` entirely, so it would happily cache a solve the drain would
+    refuse to produce (wave-2 [Q22]).
+    """
+    got = _solve_gated(conn, d, iters=iters, cfg=cfg, persist=True)
+    return None if got is None else got[0]
