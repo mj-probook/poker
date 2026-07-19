@@ -112,13 +112,19 @@ def test_cache_solve_gates_on_solvable():
         "SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
 
 
-def test_drain_solver_and_cache_solve_agree_on_what_is_solvable():
-    """[Q22] one gate, one answer — the two entry points cannot diverge."""
+def test_drain_solver_and_cache_solve_reject_the_same_spots():
+    """[Q22] one gate, one answer — the two entry points cannot diverge.
+
+    Only the REJECTED spots are exercised: those return before solving, so this
+    stays cheap while still pinning that both paths consult the same gate.
+    """
     parsed, _ = _ante_hu()
     conn = db.connect()
-    for d in extract_decisions(parsed):
-        gated = tier2.solvable(d)
-        solver = tier2.make_drain_solver(conn, iters=30, cfg=FAST_CFG, persist=False)
-        got = solver("k", d)
-        if not gated:
-            assert got is None
+    solver = tier2.make_drain_solver(conn, iters=20, cfg=FAST_CFG, persist=False)
+
+    rejected = [d for d in extract_decisions(parsed) if not tier2.solvable(d)]
+    assert rejected, "fixture should contain at least one non-solvable spot"
+    for d in rejected:
+        assert solver("k", d) is None
+        assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
+    assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
