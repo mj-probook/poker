@@ -1,0 +1,228 @@
+"""Differential harness: engine vs PokerKit (impl doc §3 Slice A, M0 exit).
+
+Generates seeded random NLHE hands, plays them through our engine with a random
+legal-action policy, then reconstructs the *identical* hand in PokerKit and
+compares final per-seat stacks. PokerKit is the presumed-correct oracle.
+
+Reusable by Slice H (M6): the vec-env's ``SingleEnvAdapter`` runs the same
+generator + comparison to prove the Rust/numpy port matches the Python engine.
+
+Seat layout is chosen to match PokerKit's fixed convention (n>=3: seat0=SB,
+seat1=BB, button=n-1; HU: seat1=SB/button) so stacks compare seat-for-seat.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+
+from pokerkit import Automation, Mode, NoLimitTexasHoldem
+
+from pokerlab.engine.cards import Deck, cards_to_str
+from pokerlab.engine.evaluator import rank_showdown
+from pokerlab.engine.state import Hand, HandSetup
+from pokerlab.types import Action
+
+BB = 100
+SB = 50
+
+_AUTOMATIONS = (
+    Automation.ANTE_POSTING,
+    Automation.BET_COLLECTION,
+    Automation.BLIND_OR_STRADDLE_POSTING,
+    Automation.CARD_BURNING,
+    Automation.HOLE_CARDS_SHOWING_OR_MUCKING,
+    Automation.HAND_KILLING,
+    Automation.CHIPS_PUSHING,
+    Automation.CHIPS_PULLING,
+    Automation.RUNOUT_COUNT_SELECTION,
+)
+
+
+def random_setup(seed: int) -> HandSetup:
+    """A seeded random hand. Stacks >= 2bb so blinds/antes always post fully
+    (no ante-trimming edge); arbitrary chip counts so odd-chip splits arise."""
+    rng = random.Random(seed)
+    n = rng.randint(2, 9)
+    ante = rng.choice([0, 0, 0, 10, 25])
+    stacks = []
+    for _ in range(n):
+        lo, hi = (2 * BB, 25 * BB) if rng.random() < 0.45 else (25 * BB, 150 * BB)
+        stacks.append(rng.randint(lo, hi))
+    button = 1 if n == 2 else n - 1
+    deck = Deck((seed * 2654435761) & 0xFFFFFFFF)
+    cards = deck.deal(2 * n + 5)
+    hole = tuple((cards[2 * i], cards[2 * i + 1]) for i in range(n))
+    board = tuple(cards[2 * n : 2 * n + 5])
+    return HandSetup(stacks=tuple(stacks), button=button, bb=BB, sb=SB,
+                     ante=ante, hole=hole, board=board)
+
+
+def random_action(hand: Hand, rng: random.Random) -> Action:
+    """Pick a random *legal* action, biased toward reaching showdowns while
+    still frequently raising/jamming for side-pot coverage."""
+    acts = hand.legal_actions()
+    labels = {a[0]: a for a in acts}
+    roll = rng.random()
+    if "fold" in labels and roll < 0.12:
+        return ("fold", 0)
+    bounds = hand.raise_bounds()
+    if bounds is not None and roll < 0.55:
+        min_to, max_to = bounds
+        if min_to == max_to or roll < 0.22:
+            return ("allin", max_to)
+        to = rng.randint(min_to, max_to)
+        label = "allin" if to == max_to else ("raise" if hand.current_bet > 0 else "bet")
+        return (label, to)
+    if "check" in labels:
+        return ("check", 0)
+    if "call" in labels:
+        return labels["call"]
+    if "allin" in labels:  # all-in call for less
+        return labels["allin"]
+    return acts[0]
+
+
+def play_engine(setup: HandSetup, seed: int) -> Hand:
+    """Play a full hand through our engine with the random policy."""
+    rng = random.Random(seed ^ 0x5DEECE66D)
+    hand = Hand(setup)
+    while not hand.is_terminal():
+        hand.apply(random_action(hand, rng))
+    return hand
+
+
+def pokerkit_final_stacks(setup: HandSetup, action_history: list[tuple[int, Action]]) -> list[int]:
+    """Replay the same hand in PokerKit; return final per-seat stacks."""
+    n = len(setup.stacks)
+    blinds = (setup.sb, setup.bb) + (0,) * (n - 2)
+    s = NoLimitTexasHoldem.create_state(
+        _AUTOMATIONS, True, setup.ante, blinds, setup.bb,
+        tuple(setup.stacks), n, mode=Mode.TOURNAMENT,
+    )
+    for i in range(n):
+        s.deal_hole(cards_to_str(setup.hole[i]))
+
+    board = setup.board
+    dealt = 0
+
+    def drain_board() -> None:
+        nonlocal dealt
+        while s.can_deal_board():
+            cnt = s.board_dealing_count
+            s.deal_board(cards_to_str(board[dealt : dealt + cnt]))
+            dealt += cnt
+
+    drain_board()
+    for seat, (label, amount) in action_history:
+        if s.actor_index != seat:
+            raise AssertionError(
+                f"action-order mismatch: pokerkit actor {s.actor_index}, engine seat {seat}"
+            )
+        if label == "fold":
+            s.fold()
+        elif label in ("check", "call"):
+            s.check_or_call()
+        elif label in ("bet", "raise"):
+            s.complete_bet_or_raise_to(amount)
+        elif label == "allin":
+            if amount > max(s.bets):  # all-in raise (full or short)
+                s.complete_bet_or_raise_to(amount)
+            else:  # all-in call for less
+                s.check_or_call()
+        else:  # pragma: no cover
+            raise ValueError(f"unknown label {label}")
+        drain_board()
+    drain_board()
+    return list(s.stacks)
+
+
+def _is_odd_chip_only(hand: Hand, mine: list[int], theirs: list[int]) -> bool:
+    """True iff the only difference is odd-chip *placement* among tied winners.
+
+    PokerKit's multiway all-in showdown merges side pots via an internal
+    hand-killing/`can_win_now` heuristic, so in rare multiway all-in ties the
+    single odd chip of a split can land on a different tied winner than our
+    standard "lowest eligible seat" rule. That is a labelling difference, not a
+    mechanics bug: winners, pot totals and every stack agree to within one chip
+    that nets to zero, and only among players who hold an identical hand.
+    """
+    diffs = [m - t for m, t in zip(mine, theirs)]
+    moved = [i for i, d in enumerate(diffs) if d != 0]
+    if not moved or sum(diffs) != 0:
+        return False
+    # Odd chips are tiny: at most one per split pot (<= number of seats). A real
+    # mis-split would move a whole half-pot, far above this cap.
+    if any(abs(diffs[i]) > len(mine) for i in moved):
+        return False
+    board = hand.full_board[:5]
+    grouped: dict[int, int] = {}  # hand rank -> net chips moved within that tie
+    for i in moved:
+        if hand.folded[i] or hand.hole[i] is None:
+            return False  # a folded/non-showdown seat changed -> real bug
+        rank = rank_showdown(hand.hole[i], board)  # type: ignore[arg-type]
+        grouped[rank] = grouped.get(rank, 0) + diffs[i]
+    # every reallocation stayed within one group of identically-ranked winners
+    return all(net == 0 for net in grouped.values())
+
+
+def check_hand(seed: int) -> tuple[str, str]:
+    """Play + compare one seeded hand.
+
+    Returns (status, detail): status is "exact" (stacks identical), "oddchip"
+    (identical up to the documented PokerKit odd-chip-placement quirk), or
+    "mismatch" (a real discrepancy — an engine bug).
+    """
+    setup = random_setup(seed)
+    hand = play_engine(setup, seed)
+    mine = hand.final_stacks()
+    theirs = pokerkit_final_stacks(setup, hand.action_history)
+    if mine == theirs:
+        return "exact", ""
+    status = "oddchip" if _is_odd_chip_only(hand, mine, theirs) else "mismatch"
+    detail = (
+        f"seed={seed} n={len(setup.stacks)} ante={setup.ante}\n"
+        f"  stacks0={setup.stacks}\n"
+        f"  engine  ={mine}\n"
+        f"  pokerkit={theirs}\n"
+        f"  actions ={hand.action_history}"
+    )
+    return status, detail
+
+
+def scan_chunk(bounds: tuple[int, int]) -> tuple[int, int, list[str]]:
+    """Worker: classify a [lo, hi) seed range -> (exact, oddchip, mismatches)."""
+    import warnings
+
+    warnings.filterwarnings("ignore")  # PokerKit's dealable-card notices
+    lo, hi = bounds
+    exact = odd = 0
+    mismatches: list[str] = []
+    for seed in range(lo, hi):
+        status, detail = check_hand(seed)
+        if status == "exact":
+            exact += 1
+        elif status == "oddchip":
+            odd += 1
+        else:
+            mismatches.append(detail)
+    return exact, odd, mismatches
+
+
+def run_differential(
+    n: int, start: int = 0, workers: int | None = None, chunk: int = 400
+) -> tuple[int, int, list[str]]:
+    """Run the PokerKit differential over ``n`` seeded hands across processes."""
+    import concurrent.futures as cf
+    import os
+
+    workers = workers or max(1, (os.cpu_count() or 2) - 2)
+    bounds = [(s, min(s + chunk, start + n)) for s in range(start, start + n, chunk)]
+    exact = odd = 0
+    mismatches: list[str] = []
+    with cf.ProcessPoolExecutor(max_workers=workers) as pool:
+        for e, o, m in pool.map(scan_chunk, bounds):
+            exact += e
+            odd += o
+            mismatches.extend(m)
+    return exact, odd, mismatches
