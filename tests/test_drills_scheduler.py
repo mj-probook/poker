@@ -141,3 +141,67 @@ def test_is_due_is_false_before_the_due_date_across_awareness():
     naive_due = SRState("k", 2.5, 0.0, 0, "2026-07-21T00:00:00")
     aware_now = datetime(2026, 7, 20, tzinfo=timezone.utc)
     assert _is_due(naive_due, aware_now) is False
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 finding [E41]: easiness had a floor but no ceiling and the interval
+# compounded unbounded, so `now + timedelta(days=interval)` overflowed
+# datetime.max after ~14 consecutive correct reviews -- a 500 on the success
+# path. Round-2 [E42]: select_next could only ever return a key already in
+# sr_state, so the first category answered was the only one ever served again.
+# Round-2 [E44]: the orderings sorted raw ISO strings instead of instants.
+# --------------------------------------------------------------------------- #
+def test_interval_and_easiness_are_capped():
+    st = sch.initial_state("k", NOW)
+    for _ in range(40):
+        st = sch.review(st, True, NOW)
+    assert st.easiness <= sch.MAX_EASINESS
+    assert st.interval_days <= sch.MAX_INTERVAL_DAYS
+
+
+@pytest.mark.parametrize("reps", [14, 100, 10_000])
+def test_review_never_overflows_however_long_the_streak(reps):
+    """The whole point of [E41]: no streak length may raise."""
+    st = sch.initial_state("k", NOW)
+    for _ in range(reps):
+        st = sch.review(st, True, NOW)          # must not raise OverflowError
+    assert datetime.fromisoformat(st.due) >= NOW
+
+
+def test_due_arithmetic_is_total_even_next_to_datetime_max():
+    st = sch.SRState("k", 2.5, 6.0, 5, datetime.max.isoformat())
+    out = sch.review(st, True, datetime.max - timedelta(days=1))
+    assert datetime.fromisoformat(out.due)      # saturated, not raised
+
+
+def test_select_next_reaches_categories_never_drilled():
+    conn = db.connect(":memory:")
+    cats = ["a", "b", "c"]
+    # "a" answered and scheduled far out; b and c have never been drilled.
+    db.upsert_sr_state(conn, "a", 2.5, 6.0, 2, (NOW + timedelta(days=6)).isoformat())
+    assert sch.select_next(conn, NOW, categories=cats) in {"b", "c"}
+    # without the vocabulary the scheduler can still only see what it has seen
+    assert sch.select_next(conn, NOW) == "a"
+
+
+def test_select_next_skips_stale_keys_outside_the_vocabulary():
+    conn = db.connect(":memory:")
+    db.upsert_sr_state(conn, "OBSOLETE|preflop|jam|3", 2.5, 0.0, 0,
+                       (NOW - timedelta(days=999)).isoformat())   # maximally overdue
+    assert sch.select_next(conn, NOW, categories=["a", "b"]) in {"a", "b"}
+
+
+def test_next_due_orders_by_instant_not_iso_string():
+    """+00:00 sorts before -05:00 lexicographically but is the EARLIER instant."""
+    states = [
+        sch.SRState("utc", 2.5, 0.0, 0, "2026-07-19T00:00:00+00:00"),   # 00:00Z
+        sch.SRState("offset", 2.5, 0.0, 0, "2026-07-18T23:00:00-05:00"),  # 04:00Z
+    ]
+    assert [s.leak_key for s in sch.next_due(states)] == ["utc", "offset"]
+    assert [s.leak_key for s in sch.next_due(list(reversed(states)))] == ["utc", "offset"]
+
+
+def test_unparseable_due_is_treated_as_overdue_not_a_crash():
+    bad = sch.SRState("k", 2.5, 0.0, 0, "not-a-timestamp")
+    assert sch._is_due(bad, NOW) is True
+    assert sch.next_due([bad])[0].leak_key == "k"

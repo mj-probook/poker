@@ -77,13 +77,19 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
     rng = random.Random(seed)
+    # Replay guard (round-2 finding [E43]): a double-click posts the same
+    # drill_id twice and SM-2 counted both, inflating reps/interval off one
+    # answer. Only the *immediately* repeated answer is absorbed — fetching the
+    # next spot clears it, so genuinely re-practising a drill still counts.
+    last: dict[str, object] = {"drill_id": None, "response": None}
 
     @app.get("/api/drill/next")
     def next_drill() -> dict:
         with lock:
             now = datetime.now(timezone.utc)
-            cat = sch.select_next(conn, now) or default_cat
+            cat = sch.select_next(conn, now, categories=by_cat.keys()) or default_cat
             pool = by_cat.get(cat) or population
+            last["drill_id"] = None
             return _spot_json(rng.choice(pool))
 
     @app.post("/api/drill/answer")
@@ -92,6 +98,8 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             drill = by_id.get(ans.drill_id)
             if drill is None:
                 raise HTTPException(404, f"unknown drill_id {ans.drill_id!r}")
+            if ans.drill_id == last["drill_id"]:
+                return last["response"]          # type: ignore[return-value]
             try:
                 result = score(drill.solution, ans.action, drill.pot_bb)
             except ValueError as exc:
@@ -101,7 +109,7 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                                     result.correct, result.ev_loss_bb,
                                     now.isoformat())
             sch.schedule_attempt(conn, drill.spot_key, result.correct, now)
-            return {
+            payload = {
                 "drill_id": drill.drill_id,
                 "correct": result.correct,
                 "ev_loss_bb": result.ev_loss_bb,
@@ -109,6 +117,8 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 "chosen_frequency": result.chosen_frequency,
                 "explanation": _explain(result, ans.action),
             }
+            last["drill_id"], last["response"] = ans.drill_id, payload
+            return payload
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

@@ -11,7 +11,9 @@ the worst-error-rate category first among everything currently due (plan §5.3:
 
 from __future__ import annotations
 
+import math
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -21,6 +23,14 @@ Q_CORRECT = 5   # clean recall
 Q_WRONG = 2     # lapse (< 3 -> schedule resets)
 DEFAULT_EASINESS = 2.5
 MIN_EASINESS = 1.3
+# Ceilings (round-2 finding [E41]). Textbook SM-2 bounds easiness below but not
+# above, and lets the interval compound without limit: since a correct answer
+# also *raises* the multiplier, the interval grows super-exponentially and
+# `now + timedelta(days=interval)` overflows `datetime.max` at ~14 consecutive
+# correct reviews — i.e. the app crashed as a reward for mastery. A drill
+# syllabus has no use for an interval beyond a year, so both are capped.
+MAX_EASINESS = 3.0
+MAX_INTERVAL_DAYS = 365.0
 
 
 @dataclass(frozen=True)
@@ -39,7 +49,27 @@ def initial_state(leak_key: str, now: datetime) -> SRState:
 
 def _update_easiness(ef: float, quality: int) -> float:
     ef2 = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-    return max(MIN_EASINESS, ef2)
+    return min(MAX_EASINESS, max(MIN_EASINESS, ef2))
+
+
+def _clamp_interval(days: float) -> float:
+    """Keep the interval inside [0, MAX_INTERVAL_DAYS]; NaN reads as 0."""
+    if not math.isfinite(days):
+        return 0.0
+    return min(MAX_INTERVAL_DAYS, max(0.0, days))
+
+
+def _due_iso(now: datetime, interval_days: float) -> str:
+    """`now + interval_days` as ISO-8601, total over every input.
+
+    The interval is already clamped, but `now` itself can sit close enough to
+    `datetime.max` that the addition still overflows; saturating keeps this
+    function total so no scheduling path can raise (round-2 finding [E41]).
+    """
+    try:
+        return (now + timedelta(days=_clamp_interval(interval_days))).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return datetime.max.replace(tzinfo=now.tzinfo).isoformat()
 
 
 def review(state: SRState, correct: bool, now: datetime) -> SRState:
@@ -56,14 +86,13 @@ def review(state: SRState, correct: bool, now: datetime) -> SRState:
         elif reps == 2:
             interval = 6.0
         else:
-            interval = round(state.interval_days * easiness, 4)
-    due = (now + timedelta(days=interval)).isoformat()
-    return SRState(state.leak_key, easiness, interval, reps, due)
+            interval = _clamp_interval(round(state.interval_days * easiness, 4))
+    return SRState(state.leak_key, easiness, interval, reps, _due_iso(now, interval))
 
 
 def next_due(states: list[SRState]) -> list[SRState]:
     """Categories ordered by due date, soonest first."""
-    return sorted(states, key=lambda s: s.due)
+    return sorted(states, key=_due_dt)
 
 
 def _as_utc(ts: datetime) -> datetime:
@@ -76,8 +105,23 @@ def _as_utc(ts: datetime) -> datetime:
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
 
 
+def _due_dt(state: SRState) -> datetime:
+    """The state's due date as aware UTC — the sort/compare key.
+
+    Round-1 finding [16] normalized the *comparison* in `_is_due` but left the
+    orderings sorting raw ISO strings, which ranks "…T00:00+00:00" before an
+    earlier-sorting-but-later "…T23:00-05:00" (round-2 finding [E44]). An
+    unparseable stored value reads as maximally overdue so it gets served and
+    re-stamped rather than crashing the whole ordering.
+    """
+    try:
+        return _as_utc(datetime.fromisoformat(state.due))
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _is_due(state: SRState, now: datetime) -> bool:
-    return _as_utc(datetime.fromisoformat(state.due)) <= _as_utc(now)
+    return _due_dt(state) <= _as_utc(now)
 
 
 # --------------------------------------------------------------------------- #
@@ -99,16 +143,41 @@ def schedule_attempt(conn: sqlite3.Connection, leak_key: str, correct: bool,
     return updated
 
 
-def select_next(conn: sqlite3.Connection, now: datetime) -> str | None:
-    """The leak_key to drill next: worst error-rate among those due, else the
-    soonest-due category. None when nothing has ever been scheduled."""
+def select_next(conn: sqlite3.Connection, now: datetime,
+                categories: Iterable[str] | None = None) -> str | None:
+    """The leak_key to drill next: due first (worst error-rate wins), then any
+    never-drilled category, then the soonest-due one.
+
+    `categories` is the caller's full category vocabulary — normally every
+    `spot_key` the drill generator can emit. Without it this can only ever
+    return a key that is already in `sr_state`, and `sr_state` is only written
+    by *answering* a drill: the first category answered becomes the only one
+    ever served again (round-2 finding [E42]). Passing the population makes
+    unseen categories reachable, and confines the result to keys the caller can
+    actually serve — a stale `sr_state` row for a category the generator no
+    longer emits is skipped rather than silently widening the caller's pool.
+
+    Returns None when there is nothing to schedule at all.
+    """
     states = [_state_from_row(r) for r in db.all_sr_state(conn)]
-    if not states:
+    known = list(dict.fromkeys(categories)) if categories is not None else None
+    if known is not None:
+        allowed = set(known)
+        states = [s for s in states if s.leak_key in allowed]
+    if not states and not known:
         return None
+
     err = {r["spot_key"]: r["error_rate"]
            for r in views.worst_leak_categories(conn, limit=10_000)}
     due = [s for s in states if _is_due(s, now)]
     if due:
-        due.sort(key=lambda s: (-err.get(s.leak_key, 0.0), s.due))
+        due.sort(key=lambda s: (-err.get(s.leak_key, 0.0), _due_dt(s)))
         return due[0].leak_key
-    return next_due(states)[0].leak_key
+
+    if known is not None:                       # nothing due -> anything unseen
+        seen = {s.leak_key for s in states}
+        unseen = [c for c in known if c not in seen]
+        if unseen:
+            return unseen[0]
+
+    return next_due(states)[0].leak_key if states else None

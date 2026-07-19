@@ -31,13 +31,21 @@ def test_get_next_returns_spot_contract(client):
 
 
 def test_get_next_icm_spot_carries_tournament(client):
-    # Answering an ICM drill seeds its category into the scheduler; the next
-    # spot then comes from that ICM category and must carry TournamentContext.
-    client.post("/api/drill/answer",
-                json={"drill_id": "SBjam.icm|preflop|jam|10:AA", "action": "jam"})
-    spot = client.get("/api/drill/next").json()
-    assert spot["kind"] == "icm"
-    assert spot["tournament"] is not None
+    # Walk the drill loop until the scheduler serves an ICM spot, then assert it
+    # carries TournamentContext. This used to seed one ICM category and assert
+    # the *very next* spot came back from it -- which only held because
+    # select_next was starved to a single category (round-2 finding [E42]).
+    # Now that unseen categories are reachable, the ICM set is arrived at by
+    # actually drilling, which is the behaviour worth pinning.
+    for _ in range(40):
+        spot = client.get("/api/drill/next").json()
+        if spot["kind"] == "icm":
+            assert spot["tournament"] is not None
+            return
+        client.post("/api/drill/answer",
+                    json={"drill_id": spot["drill_id"],
+                          "action": spot["legal_actions"][0]})
+    raise AssertionError("scheduler never served an ICM spot")
     assert spot["tournament"]["players_remaining"] == 4
     assert len(spot["tournament"]["payouts"]) == 3
 
@@ -83,3 +91,47 @@ def test_index_and_static_served(client):
     assert "app.js" in idx.text
     js = client.get("/static/app.js")
     assert js.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Round-2 findings [E41]+[E42], the self-bricking pair. select_next could only
+# return keys already in sr_state, so one category was served forever; that in
+# turn drove a single category's rep count high enough for the uncapped SM-2
+# interval to overflow datetime.max -- HTTP 500 as a reward for correct play.
+# Fixing either alone hides the other, so this drives both from the HTTP edge.
+# --------------------------------------------------------------------------- #
+def test_long_correct_streak_never_500s_and_covers_the_population(client):
+    from pokerlab.drills import generator as gen
+
+    all_cats = {d.spot_key for d in gen.default_population()}
+    seen: set[str] = set()
+
+    for _ in range(300):
+        spot = client.get("/api/drill/next")
+        assert spot.status_code == 200, spot.text
+        spot = spot.json()
+        drill_id = spot["drill_id"]
+        seen.add(drill_id.rsplit(":", 1)[0])
+        # always answer correctly -- the trajectory that used to overflow
+        best = client.post("/api/drill/answer",
+                           json={"drill_id": drill_id, "action": spot["legal_actions"][0]})
+        assert best.status_code == 200, f"500 on iteration: {best.text}"
+
+    assert seen == all_cats, f"unreachable categories: {sorted(all_cats - seen)}"
+
+
+def test_repeated_answer_for_one_drill_counts_once(client):
+    spot = client.get("/api/drill/next").json()
+    body = {"drill_id": spot["drill_id"], "action": spot["legal_actions"][0]}
+    first = client.post("/api/drill/answer", json=body).json()
+    for _ in range(7):                       # double-click storm
+        assert client.post("/api/drill/answer", json=body).json() == first
+
+    conn = sqlite3.connect(client.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM drill_attempts").fetchone()[0] == 1
+    assert conn.execute("SELECT reps FROM sr_state").fetchone()[0] == 1
+
+    # fetching the next spot re-arms it: genuine re-practice still counts
+    client.get("/api/drill/next")
+    client.post("/api/drill/answer", json=body)
+    assert conn.execute("SELECT COUNT(*) FROM drill_attempts").fetchone()[0] == 2
