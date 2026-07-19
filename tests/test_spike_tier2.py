@@ -128,3 +128,47 @@ def test_drain_solver_and_cache_solve_reject_the_same_spots():
         assert solver("k", d) is None
         assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
     assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E27]: tier2 built the subgame tree with
+# `stack = max(eff_bb - pot0/2, pot0)`. The clamp INVENTS chips whenever the
+# hero is short relative to the pot — at eff_bb=5, pot0=20 the hero truly has
+# -5bb behind (already committed) and the tree was built with 20bb behind, i.e.
+# a completely different game, graded as if it were the hero's.
+# --------------------------------------------------------------------------- #
+def _decision_with(d, *, eff_bb: float, pot_bb: float):
+    import dataclasses
+    return dataclasses.replace(d, eff_bb=eff_bb, pot_bb=pot_bb)
+
+
+def test_effective_behind_is_not_clamped_upward():
+    parsed, _ = _ante_hu()
+    d = extract_decisions(parsed)[4]
+
+    # comfortably deep: true remaining behind, unchanged
+    deep = _decision_with(d, eff_bb=37.5, pot_bb=5.0)
+    assert tier2.effective_behind_bb(deep) == pytest.approx(35.0)
+
+    # short vs the pot: the TRUE (small) stack, not inflated to the pot size
+    short = _decision_with(d, eff_bb=10.0, pot_bb=12.0)
+    assert tier2.effective_behind_bb(short) == pytest.approx(4.0)
+
+
+def test_hero_with_no_chips_behind_is_not_solvable():
+    parsed, _ = _ante_hu()
+    d = extract_decisions(parsed)[4]
+
+    for eff, pot in [(5.0, 20.0), (2.0, 30.0), (8.0, 16.0)]:
+        broke = _decision_with(d, eff_bb=eff, pot_bb=pot)
+        assert tier2.effective_behind_bb(broke) <= 0.0
+        assert not tier2.solvable(broke), (
+            f"eff_bb={eff} pot={pot}: no chips behind is not a postflop spot")
+
+
+def test_no_chips_behind_writes_no_solve():
+    parsed, _ = _ante_hu()
+    d = _decision_with(extract_decisions(parsed)[4], eff_bb=5.0, pot_bb=20.0)
+    conn = db.connect()
+    assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
+    assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0

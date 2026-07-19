@@ -127,9 +127,28 @@ def solvable(d: Decision) -> bool:
     The ONE gate for tier-2 solving: every entry point routes through it, so the
     drain worker and the cache warmer cannot disagree about what is solvable
     (wave-2 [Q22]).
+
+    A hero with nothing behind is refused rather than fabricated. The stack used
+    to be `max(eff_bb - pot0/2, pot0)`, whose clamp INVENTED chips exactly when
+    the hero was short: at eff_bb=5 into a 20bb pot the hero truly has -5bb
+    behind, and the tree was built with 20bb — a different game, graded as if it
+    were the hero's. With no chips behind there is no betting problem to solve,
+    so the spot is not tier-2 at all and falls to the best-available tier
+    (wave-2 [E27]).
     """
     return (d.tier == TIER_SOLVER and d.game_state is not None
-            and len(d.board) >= 4 and hero_is_oop(d))
+            and len(d.board) >= 4 and hero_is_oop(d)
+            and effective_behind_bb(d) > 0.0)
+
+
+def effective_behind_bb(d: Decision) -> float:
+    """Chips still behind, in bb — the tree's stack. May be <= 0.
+
+    Approximated as ``eff_bb - pot0/2``: both players are assumed to have put in
+    half the pot (the documented tier-2 symmetric-stack approximation, round-1
+    [22]). What it must NOT do is clamp the result upward — see `solvable`.
+    """
+    return d.eff_bb - max(d.pot_bb, 1.0) / 2.0
 
 
 def solve_decision(d: Decision, *, iters: int = DEFAULT_ITERS,
@@ -138,7 +157,9 @@ def solve_decision(d: Decision, *, iters: int = DEFAULT_ITERS,
     if len(d.board) < 4:
         return None
     pot0 = max(d.pot_bb, 1.0)
-    stack = max(d.eff_bb - pot0 / 2.0, pot0)  # approx effective remaining behind
+    stack = effective_behind_bb(d)
+    if stack <= 0.0:
+        return None  # nothing behind: not a postflop betting problem (see solvable)
     tree = sg.build_tree(tuple(d.board), pot0=pot0, stack=stack, cfg=cfg)
     solver = sg.SubgameSolver(tree, tuple(d.board), sg.uniform_range(),
                               sg.uniform_range(), pot0=pot0)
