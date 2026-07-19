@@ -67,18 +67,33 @@ def _summary_json(ph: ParsedHand) -> str:
 
 def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
                     *, graded_at: str, raw_texts: list[str] | None = None) -> dict:
-    """Persist a graded session atomically. Counts {imported, graded, queued, skipped}.
+    """Persist a graded session atomically.
+
+    Counts {imported, graded, queued, skipped, failed}.
 
     One transaction: either the whole session lands or none of it does, so a
     failure part-way through cannot leave a half-written session behind. Hands
     already imported (same site + HH hand number) are skipped along with their
     gradings, so re-importing a file never double-counts into the leak stats
     (round-1 finding [11]).
+
+    Hands the grader could not process (`report.failed_hands`) are NOT written
+    at all — importantly they do not claim their `(site, hand_uid)`, so once the
+    parser bug that broke them is fixed, re-importing the file picks them up.
+    Writing them would have made the dedup permanent (wave-2 [E16]). A hand
+    that failed only *some* of its decisions is dropped whole for the same
+    reason: it stays re-importable, rather than contributing partial stats that
+    can never be completed.
     """
     n_graded = n_queued = n_skipped = 0
+    failed_idx = {fh.hand_index for fh in report.failed_hands}
+    n_failed = len(failed_idx)
     try:
         hand_ids: list[int | None] = []
         for i, ph in enumerate(parsed_hands):
+            if i in failed_idx:
+                hand_ids.append(None)
+                continue
             raw = raw_texts[i] if raw_texts is not None else ""
             hid = db.insert_imported_hand(
                 conn, ph.site, raw, _summary_json(ph), graded_at,
@@ -90,7 +105,7 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
         for gd in report.graded:
             hid = hand_ids[gd.hand_index]
             if hid is None:
-                continue  # duplicate hand: its gradings are already stored
+                continue  # duplicate (already stored) or failed (not stored)
             g = gd.grading
             if g.graded:
                 db.insert_grading(conn, hid, g.decision_index, g.tier, g.chosen,
@@ -109,7 +124,8 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
         conn.rollback()
         raise
     return {"imported": sum(h is not None for h in hand_ids),
-            "graded": n_graded, "queued": n_queued, "skipped": n_skipped}
+            "graded": n_graded, "queued": n_queued, "skipped": n_skipped,
+            "failed": n_failed}
 
 
 def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:

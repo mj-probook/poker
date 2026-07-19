@@ -213,3 +213,56 @@ def test_imported_hands_records_the_source_hand_number() -> None:
         "SELECT hand_uid FROM imported_hands ORDER BY id")]
     assert uids == [ph.hand_id for ph in parsed]
     assert all(u for u in uids)
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E16][E17]: a hand that FAILED grading was still given an
+# imported_hands row, so it claimed its (site, hand_uid) — and the dedup added
+# in [11] then made it permanently un-re-importable: fix the parser, re-import
+# the file, and the hand is skipped as a duplicate forever. The summary also
+# could not distinguish a half-failed session from a clean one.
+# --------------------------------------------------------------------------- #
+def _poisoned(ph):
+    """A hand whose replay raises: the first action over-commits the stack."""
+    import dataclasses
+    return dataclasses.replace(ph, actions=[(ph.actions[0][0], ("raise", 10**9))])
+
+
+def test_failed_hand_does_not_claim_its_dedup_uid() -> None:
+    parsed, raws = _load()
+    broken = list(parsed)
+    broken[1] = _poisoned(parsed[1])          # simulate a parser bug on hand 1
+    report = grade_session(broken, population=load_population())
+    assert report.failed_hand_count == 1
+
+    conn = db.connect()
+    counts = persist_session(conn, broken, report, graded_at=AT, raw_texts=raws)
+
+    assert counts["failed"] == 1
+    assert counts["imported"] == len(parsed) - 1
+    uids = {r["hand_uid"] for r in conn.execute("SELECT hand_uid FROM imported_hands")}
+    assert parsed[1].hand_id not in uids, "a failed hand must not claim its uid"
+
+
+def test_a_parser_fix_lets_a_previously_failed_hand_import() -> None:
+    parsed, raws = _load()
+    broken = list(parsed)
+    broken[1] = _poisoned(parsed[1])
+    conn = db.connect()
+    persist_session(conn, broken, grade_session(broken, population=load_population()),
+                    graded_at=AT, raw_texts=raws)
+
+    # "parser fixed": re-import the same file, now all hands parse
+    report2 = grade_session(parsed, population=load_population())
+    second = persist_session(conn, parsed, report2, graded_at=AT, raw_texts=raws)
+
+    assert second["failed"] == 0
+    assert second["imported"] == 1, "the previously-failed hand must import now"
+    assert second["skipped"] == len(parsed) - 1   # the rest are genuine dupes
+    uids = {r["hand_uid"] for r in conn.execute("SELECT hand_uid FROM imported_hands")}
+    assert parsed[1].hand_id in uids
+
+
+def test_clean_session_reports_zero_failed() -> None:
+    conn, _report, counts = _persisted_session()
+    assert counts["failed"] == 0
