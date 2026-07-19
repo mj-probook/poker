@@ -59,6 +59,50 @@ def test_leaf_value_fn_returns_per_card_values_shape():
     assert np.isfinite(out).all()
 
 
+# --------------------------------------------------------------------------- #
+# Round-1 finding [1]: the M5 exit was asserted ONLY by slow-gated tests that
+# train from scratch, so the fast suite proved nothing about it. Training in CI
+# is too slow, so the exit is asserted here against a checked-in deterministic
+# trained net (regenerate with scripts/gen_leduc_valuenet_artifact.py).
+# --------------------------------------------------------------------------- #
+NET_ARTIFACT = Path(__file__).parent / "fixtures" / "leduc_valuenet.pt"
+
+
+def load_pinned_net() -> PBSValueNet:
+    blob = torch.load(NET_ARTIFACT, weights_only=True)
+    net = PBSValueNet(blob["hidden"])
+    net.load_state_dict(blob["state_dict"])
+    return net.eval()
+
+
+def test_pinned_net_artifact_matches_its_recorded_quality():
+    blob = torch.load(NET_ARTIFACT, weights_only=True)
+    # the artifact records the config it was generated under, so a silent
+    # regeneration under different settings is visible in the diff
+    assert blob["seed"] == 0 and blob["hidden"] == 64
+    assert blob["n_per_line"] == 4000 and blob["epochs"] == 300
+    assert blob["val_rmse"] < 0.01
+
+
+def test_m5_exit_net_driven_trunk_reproduces_root_value(leduc_sigma_star):
+    """M5 exit, in the FAST suite: the value net drives the depth-limited trunk
+    to the full-game root value within 2e-3 (measured 1.2e-4 on the artifact)."""
+    from pokerlab.cfr.exploit import on_policy_values
+    from pokerlab.cfr.game import build_tree
+    from pokerlab.rebel.depth_limited import DepthLimitedLeducOracle
+    from pokerlab.rebel.trunk import DepthLimitedSolver
+
+    full_tree, sigma = leduc_sigma_star
+    v_full = on_policy_values(full_tree, sigma)[0]
+
+    trunk = DepthLimitedSolver(net_leaf_value_fn(load_pinned_net()))
+    trunk.run(600)
+    dl_tree = build_tree(DepthLimitedLeducOracle(sigma))
+    v_net = on_policy_values(dl_tree, trunk.round1_profile())[0]
+
+    assert abs(v_net - v_full) <= 2e-3
+
+
 @pytest.mark.slow
 def test_net_driven_trunk_reproduces_full_game_root_value(leduc_sigma_star):
     # Amended-A exit (M5): a value net trained on self-generated σ*-continuation
