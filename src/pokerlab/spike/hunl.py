@@ -71,7 +71,11 @@ def features(board: tuple[int, ...], pot0: float,
 
 
 FEAT_DIM = 52 + 1 + N_CLASSES + N_CLASSES
-OUT_DIM = N_CLASSES
+# Two heads: OOP per-class CFV, then IP per-class CFV. IP is NOT the zero-sum
+# complement of OOP — the subgame carries dead money (per matchup the two
+# payoffs sum to pot0, not 0) and the two players index different hands — so
+# each player gets its own target (round-1 finding [19]).
+OUT_DIM = 2 * N_CLASSES
 
 
 # --------------------------------------------------------------------------- #
@@ -111,16 +115,22 @@ def solve_river(board: tuple[int, ...], pot0: float, r0: np.ndarray, r1: np.ndar
     return s
 
 
-def oop_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
-    """OOP per-class root counterfactual value + per-class presence mask.
+def class_cfv(solver: SubgameSolver, player: int) -> tuple[np.ndarray, np.ndarray]:
+    """``player``'s per-class root value + per-class presence mask.
 
-    Per-combo root value = sum_a strat[a]*ev[a] (OOP is the root actor); then
-    reach-weighted-averaged within each of the 169 classes.
+    The value is the NORMALIZED per-hand EV (bb per matchup): the solver's root
+    counterfactual value divided by the opponent's valid-reach mass, then
+    reach-weighted-averaged within each of the 169 classes. Normalized because
+    the PBS features carry a *normalized* belief — a target that scaled with the
+    opponent's absolute reach mass would not be a function of the features.
+    `counterfactual_from_normalized` converts back at the depth limit.
     """
-    labels, evs, freqs, my_reach = solver.root_action_evs(player=0)
-    per_combo_v = np.zeros(len(my_reach))
-    for a in range(len(labels)):
-        per_combo_v += freqs[a] * evs[a]
+    avg = solver._avg_compressed()
+    v0, v1 = solver._walk(solver.root, solver.board,
+                          solver._r0.copy(), solver._r1.copy(), avg=avg)
+    ev0, ev1 = _normalize(solver, v0, v1, solver._r0, solver._r1)
+    per_combo_v = ev0 if player == 0 else ev1
+    my_reach = solver._r0 if player == 0 else solver._r1
     classes = _COMBO_TO_CLASS[solver.live]
     num = np.zeros(N_CLASSES)
     den = np.zeros(N_CLASSES)
@@ -129,6 +139,48 @@ def oop_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
     cfv = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
     mask = (den > 0).astype(np.float32)
     return cfv.astype(np.float32), mask
+
+
+def oop_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
+    """OOP per-class root value + mask (the head-0 target). See `class_cfv`."""
+    return class_cfv(solver, 0)
+
+
+def both_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
+    """The stacked two-head training target: [OOP 169 | IP 169] + its mask."""
+    c0, m0 = class_cfv(solver, 0)
+    c1, m1 = class_cfv(solver, 1)
+    return np.concatenate([c0, c1]), np.concatenate([m0, m1])
+
+
+# --------------------------------------------------------------------------- #
+# Leaf units: normalized per-hand EV <-> opponent-reach-weighted counterfactual.
+#
+# `SubgameSolver._walk` propagates COUNTERFACTUAL values — see
+# `_terminal_values`, where every payoff is multiplied by the opponent's
+# valid-reach mass (`valid_reach`, card-removal exact). The value net is trained
+# on normalized per-hand EV, so its output MUST be converted at the depth limit
+# or the leaf branch enters CFR one-to-two orders of magnitude light and the
+# turn solve simply ignores it (round-1 finding [19]).
+# --------------------------------------------------------------------------- #
+def _normalize(solver: SubgameSolver, v0: np.ndarray, v1: np.ndarray,
+               reach0: np.ndarray, reach1: np.ndarray):
+    valid0 = sg.valid_reach(reach1, solver.c1, solver.c2)  # OOP's opponent = IP
+    valid1 = sg.valid_reach(reach0, solver.c1, solver.c2)
+    ev0 = np.where(valid0 > 0, v0 / np.where(valid0 > 0, valid0, 1.0), 0.0)
+    ev1 = np.where(valid1 > 0, v1 / np.where(valid1 > 0, valid1, 1.0), 0.0)
+    return ev0, ev1
+
+
+def normalized_from_counterfactual(solver: SubgameSolver, v0, v1, reach0, reach1):
+    """Counterfactual values -> normalized per-hand EV, at this node's belief."""
+    return _normalize(solver, v0, v1, reach0, reach1)
+
+
+def counterfactual_from_normalized(solver: SubgameSolver, ev0, ev1, reach0, reach1):
+    """Normalized per-hand EV -> the counterfactual units `_walk` propagates."""
+    return (ev0 * sg.valid_reach(reach1, solver.c1, solver.c2),
+            ev1 * sg.valid_reach(reach0, solver.c1, solver.c2))
 
 
 # --------------------------------------------------------------------------- #
@@ -153,7 +205,7 @@ def generate_samples(n: int, *, seed: int, iters: int = 120) -> list[Sample]:
             continue
         pot0 = float(rng.uniform(2.0, STACK_BB))
         s = solve_river(board, pot0, r0, r1, iters=iters)
-        cfv, mask = oop_class_cfv(s)
+        cfv, mask = both_class_cfv(s)
         out.append(Sample(features(board, pot0, r0, r1), cfv, mask,
                           iso_class(tuple(board[:3]))))
     return out
@@ -246,6 +298,12 @@ class DepthLimitedTurnSolver(SubgameSolver):
     ``leaf_fn(board4, reach0_live, reach1_live) -> (v0, v1)`` over the live
     combos. Only ``_walk`` is overridden (training); best response / on-policy
     values are measured on the FULL tree via a plain SubgameSolver.
+
+    UNITS (round-1 finding [19]): ``leaf_fn`` must return values in the same
+    opponent-reach-weighted counterfactual units ``_terminal_values`` produces —
+    build it with `net_leaf_fn`, which converts the net's normalized per-hand EV
+    via `counterfactual_from_normalized`. Returning the net's raw output makes
+    the leaf branch ~40-60x too small and CFR silently ignores it.
     """
 
     def set_leaf(self, leaf_fn):
@@ -287,6 +345,45 @@ def _turn_decision_nids(solver: SubgameSolver) -> set[int]:
     return turn
 
 
+def net_leaf_fn(net, dls: "DepthLimitedTurnSolver", pot0: float):
+    """Build the river-entry leaf value function for a depth-limited turn solve.
+
+    Mirrors exactly what the river `Chance` node it replaces would do (see
+    `SubgameSolver._walk`): for each possible river card, query the net for both
+    players' normalized per-class CFV at the *post-river* belief, convert to
+    counterfactual units against that river's blocked reach, mask the combos the
+    river kills, and divide by the chance node's divisor.
+    """
+    live = dls.live
+    live_classes = _COMBO_TO_CLASS[live]
+
+    def leaf_fn(board, reach0, reach1):
+        used = set(board)
+        rivers = [c for c in range(52) if c not in used]
+        divisor = float(52 - len(board) - 4)
+        masks = [dls._cmask(c) for c in rivers]
+        # belief at the river excludes combos containing the river card — the
+        # same masking the training rows were generated under (5-card boards).
+        feats = np.stack([
+            features(board + (c,), pot0, _expand(reach0 * m, live),
+                     _expand(reach1 * m, live))
+            for c, m in zip(rivers, masks)
+        ])
+        cls = net_class_cfv_batch(net, feats)              # [R, 2*169]
+        ev0 = cls[:, live_classes]                          # [R, L] OOP head
+        ev1 = cls[:, N_CLASSES + live_classes]              # [R, L] IP head
+        v0 = np.zeros(live.size)
+        v1 = np.zeros(live.size)
+        for i, m in enumerate(masks):
+            c0, c1 = counterfactual_from_normalized(
+                dls, ev0[i], ev1[i], reach0 * m, reach1 * m)
+            v0 += c0 * m
+            v1 += c1 * m
+        return v0 / divisor, v1 / divisor
+
+    return leaf_fn
+
+
 def evaluate_spot(net, board4: tuple[int, ...], pot0: float,
                   r0: np.ndarray, r1: np.ndarray, *, iters: int) -> dict:
     """Exploitability of the net-driven turn strategy vs the exact oracle."""
@@ -295,20 +392,8 @@ def evaluate_spot(net, board4: tuple[int, ...], pot0: float,
 
     tree = sg.build_tree(board4, pot0=pot0, stack=STACK_BB, cfg=TINY_CFG)
     dls = DepthLimitedTurnSolver(tree, board4, r0.copy(), r1.copy(), pot0=pot0)
-    live = dls.live
 
-    live_classes = _COMBO_TO_CLASS[live]
-
-    def leaf_fn(board, reach0, reach1):
-        used = set(board)
-        rivers = [c for c in range(52) if c not in used]
-        full0, full1 = _expand(reach0, live), _expand(reach1, live)
-        feats = np.stack([features(board + (c,), pot0, full0, full1) for c in rivers])
-        cls = net_class_cfv_batch(net, feats)          # [R, 169]
-        v0 = cls[:, live_classes].mean(axis=0)         # per live combo
-        return v0, -v0
-
-    dls.set_leaf(leaf_fn).iterate(iters)
+    dls.set_leaf(net_leaf_fn(net, dls, pot0)).iterate(iters)
     combined = _combined_avg(oracle, dls, turn_nids)
     return {
         "expl_oracle_bb": oracle.exploitability(),
