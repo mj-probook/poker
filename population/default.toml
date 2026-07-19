@@ -1,0 +1,48 @@
+# Population action-frequency baselines for tier-3 (multiway postflop) grading.
+#
+# Tier-3 spots have no trustworthy EV reference (CLAUDE.md hard rule: tier-3
+# NEVER reports ev_loss). Instead we compare the hero's action mix to this
+# population baseline and flag frequency deviations. This is a VERSIONED,
+# in-house table (own observations only — nothing vendor-derived); bump
+# `version` when the numbers change so gradings stay reproducible.
+#
+# Keys are "<formation>|<street>" (formation == "<seats>max:<position>"); each
+# maps a normalized distribution over action_types (fold/check/call/bet/raise/
+# jam). Missing spots -> no baseline (grading records "no population baseline").
+
+version = "default-2026.07"
+
+["6max:BB|flop"]
+check = 0.55
+bet = 0.25
+call = 0.12
+fold = 0.05
+raise = 0.03
+
+["6max:BB|turn"]
+check = 0.50
+bet = 0.28
+call = 0.15
+fold = 0.05
+raise = 0.02
+
+["6max:BTN|flop"]
+check = 0.30
+bet = 0.55
+call = 0.08
+fold = 0.04
+raise = 0.03
+
+["6max:CO|flop"]
+check = 0.35
+bet = 0.50
+call = 0.08
+fold = 0.04
+raise = 0.03
+
+["9max:BB|flop"]
+check = 0.58
+bet = 0.22
+call = 0.13
+fold = 0.05
+raise = 0.02

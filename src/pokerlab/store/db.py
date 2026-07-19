@@ -89,3 +89,81 @@ def insert_grading(conn: sqlite3.Connection, hand_id: int, decision_idx: int,
     )
     conn.commit()
     return int(cur.lastrowid)
+
+
+def gradings(conn: sqlite3.Connection) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM gradings ORDER BY id")]
+
+
+# --------------------------------------------------------------------------- #
+# imported_hands (Slice F: raw HH + parsed summary, so the batch worker can
+# re-derive a decision from storage when a solve finally lands)
+# --------------------------------------------------------------------------- #
+def insert_imported_hand(conn: sqlite3.Connection, site: str, raw: str,
+                         parsed_json: str, imported_at: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO imported_hands(site, raw, parsed_json, imported_at)"
+        " VALUES (?, ?, ?, ?)",
+        (site, raw, parsed_json, imported_at),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_imported_hand(conn: sqlite3.Connection, hand_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM imported_hands WHERE id=?", (hand_id,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+# --------------------------------------------------------------------------- #
+# solution_index (tier-2 library: a spot_key hit means we can grade exactly)
+# --------------------------------------------------------------------------- #
+def index_solution(conn: sqlite3.Connection, spot_key: str, path: str,
+                   solver_version: str, exploitability: float) -> None:
+    conn.execute(
+        "INSERT INTO solution_index(spot_key, path, solver_version, exploitability)"
+        " VALUES (?, ?, ?, ?)"
+        " ON CONFLICT(spot_key) DO UPDATE SET path=excluded.path,"
+        "   solver_version=excluded.solver_version,"
+        "   exploitability=excluded.exploitability",
+        (spot_key, path, solver_version, float(exploitability)),
+    )
+    conn.commit()
+
+
+def solution_path(conn: sqlite3.Connection, spot_key: str) -> str | None:
+    row = conn.execute(
+        "SELECT path FROM solution_index WHERE spot_key=?", (spot_key,)).fetchone()
+    return row["path"] if row is not None else None
+
+
+# --------------------------------------------------------------------------- #
+# batch_queue (tier-2 solve backlog: miss -> pending; worker drains it)
+# --------------------------------------------------------------------------- #
+def enqueue_batch(conn: sqlite3.Connection, spot_key: str, hand_id: int,
+                  decision_idx: int) -> int:
+    cur = conn.execute(
+        "INSERT INTO batch_queue(spot_key, hand_id, decision_idx, status)"
+        " VALUES (?, ?, ?, 'pending')",
+        (spot_key, hand_id, decision_idx),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def pending_batch(conn: sqlite3.Connection) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM batch_queue WHERE status='pending' ORDER BY id")]
+
+
+def batch_rows(conn: sqlite3.Connection) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM batch_queue ORDER BY id")]
+
+
+def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str) -> None:
+    if status not in ("pending", "running", "done", "failed"):
+        raise ValueError(f"bad batch status {status!r}")
+    conn.execute("UPDATE batch_queue SET status=? WHERE id=?", (status, row_id))
+    conn.commit()

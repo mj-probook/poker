@@ -1,0 +1,15 @@
+Poker Hand #TM4400000003: Tournament #144000003, Bounty Hunters Special $10.50 Hold'em No Limit - Level14(200/400) - 2024/03/05 16:40:02
+Table '3' 9-max Seat #2 is the button
+Seat 1: c1d2e3f4 (4000 in chips)
+Seat 2: Hero (4000 in chips)
+Hero: posts small blind 200
+c1d2e3f4: posts big blind 400
+*** HOLE CARDS ***
+Dealt to Hero [Ah 7c]
+Hero: folds
+Uncalled bet (200) returned to c1d2e3f4
+c1d2e3f4 collected 400 from pot
+*** SUMMARY ***
+Total pot 400 | Rake 0 | Jackpot 0 | Bingo 0
+Seat 1: c1d2e3f4 (big blind) collected (400)
+Seat 2: Hero (button) folded before Flop

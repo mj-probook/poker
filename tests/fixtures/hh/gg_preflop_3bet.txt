@@ -1,0 +1,36 @@
+Poker Hand #TM4400000001: Tournament #144000001, Bounty Hunters Special $10.50 Hold'em No Limit - Level8(200/400) - 2024/03/05 14:22:11
+Table '12' 9-max Seat #6 is the button
+Seat 1: a1b2c3d4 (40000 in chips)
+Seat 2: Hero (40000 in chips)
+Seat 3: e5f6g7h8 (40000 in chips)
+Seat 5: i9j0k1l2 (40000 in chips)
+Seat 6: m3n4o5p6 (40000 in chips)
+Seat 8: q7r8s9t0 (40000 in chips)
+a1b2c3d4: posts the ante 50
+Hero: posts the ante 50
+e5f6g7h8: posts the ante 50
+i9j0k1l2: posts the ante 50
+m3n4o5p6: posts the ante 50
+q7r8s9t0: posts the ante 50
+q7r8s9t0: posts small blind 200
+a1b2c3d4: posts big blind 400
+*** HOLE CARDS ***
+Dealt to Hero [Jc Jd]
+Hero: raises 500 to 900
+e5f6g7h8: folds
+i9j0k1l2: calls 900
+m3n4o5p6: raises 1800 to 2700
+q7r8s9t0: folds
+a1b2c3d4: folds
+Hero: folds
+i9j0k1l2: folds
+Uncalled bet (1800) returned to m3n4o5p6
+m3n4o5p6 collected 3600 from pot
+*** SUMMARY ***
+Total pot 3600
+Seat 1: a1b2c3d4 (big blind) folded before Flop
+Seat 2: Hero folded before Flop
+Seat 3: e5f6g7h8 folded before Flop (didn't bet)
+Seat 5: i9j0k1l2 folded before Flop
+Seat 6: m3n4o5p6 (button) collected (3600)
+Seat 8: q7r8s9t0 (small blind) folded before Flop
