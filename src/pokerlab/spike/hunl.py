@@ -115,30 +115,37 @@ def solve_river(board: tuple[int, ...], pot0: float, r0: np.ndarray, r1: np.ndar
     return s
 
 
-def class_cfv(solver: SubgameSolver, player: int) -> tuple[np.ndarray, np.ndarray]:
-    """``player``'s per-class root value + per-class presence mask.
+def _root_normalized_evs(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
+    """Both players' NORMALIZED per-hand root EV, from ONE tree walk.
 
-    The value is the NORMALIZED per-hand EV (bb per matchup): the solver's root
-    counterfactual value divided by the opponent's valid-reach mass, then
-    reach-weighted-averaged within each of the 169 classes. Normalized because
-    the PBS features carry a *normalized* belief — a target that scaled with the
+    Normalized (per-matchup bb) rather than counterfactual because the PBS
+    features carry a *normalized* belief — a target that scaled with the
     opponent's absolute reach mass would not be a function of the features.
     `counterfactual_from_normalized` converts back at the depth limit.
     """
     avg = solver._avg_compressed()
     v0, v1 = solver._walk(solver.root, solver.board,
                           solver._r0.copy(), solver._r1.copy(), avg=avg)
-    ev0, ev1 = _normalize(solver, v0, v1, solver._r0, solver._r1)
-    per_combo_v = ev0 if player == 0 else ev1
-    my_reach = solver._r0 if player == 0 else solver._r1
+    return _normalize(solver, v0, v1, solver._r0, solver._r1)
+
+
+def _by_class(solver: SubgameSolver, per_combo_v: np.ndarray,
+              my_reach: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Reach-weighted average within each of the 169 classes, + presence mask."""
     classes = _COMBO_TO_CLASS[solver.live]
     num = np.zeros(N_CLASSES)
     den = np.zeros(N_CLASSES)
     np.add.at(num, classes, per_combo_v * my_reach)
     np.add.at(den, classes, my_reach)
     cfv = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
-    mask = (den > 0).astype(np.float32)
-    return cfv.astype(np.float32), mask
+    return cfv.astype(np.float32), (den > 0).astype(np.float32)
+
+
+def class_cfv(solver: SubgameSolver, player: int) -> tuple[np.ndarray, np.ndarray]:
+    """``player``'s per-class normalized root value + per-class presence mask."""
+    evs = _root_normalized_evs(solver)
+    return _by_class(solver, evs[player],
+                     solver._r0 if player == 0 else solver._r1)
 
 
 def oop_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
@@ -147,9 +154,14 @@ def oop_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
 
 
 def both_class_cfv(solver: SubgameSolver) -> tuple[np.ndarray, np.ndarray]:
-    """The stacked two-head training target: [OOP 169 | IP 169] + its mask."""
-    c0, m0 = class_cfv(solver, 0)
-    c1, m1 = class_cfv(solver, 1)
+    """The stacked two-head training target: [OOP 169 | IP 169] + its mask.
+
+    Shares a single tree walk between the heads — labelling is the dominant
+    cost of data-gen, and the two targets differ only in the aggregation.
+    """
+    ev0, ev1 = _root_normalized_evs(solver)
+    c0, m0 = _by_class(solver, ev0, solver._r0)
+    c1, m1 = _by_class(solver, ev1, solver._r1)
     return np.concatenate([c0, c1]), np.concatenate([m0, m1])
 
 
