@@ -20,9 +20,13 @@ The value net is the classic PBS→CFV river network:
   + pot (bb) + both players' 169-class belief. Slice-G's note ("encode the
   public line/history in the features") is honoured: the board + pot + belief
   *is* the public state at the depth boundary.
-* **target** — the OOP per-169-class root counterfactual value of the *river*
-  subgame, from an exact Slice-D CFR+ solve. Off-blueprint beliefs are sampled
-  (random, occasionally strength-tilted, sparse) per Slice-G's note.
+* **target** — the per-169-class root value of the *river* subgame from an exact
+  Slice-D CFR+ solve, **for both players** (a 2×169 stacked target: OOP head and
+  IP head). Values are *normalized per-hand EV* (bb per matchup), because the
+  features carry a normalized belief — a target scaling with the opponent's
+  absolute reach mass would not be a function of the input. Off-blueprint
+  beliefs are sampled (random, occasionally strength-tilted, sparse) per
+  Slice-G's note.
 
 Data is SpotKey-stratified (flop iso-class recorded per row) and written to
 Parquet via pyarrow.
@@ -30,13 +34,26 @@ Parquet via pyarrow.
 ## The depth-limited solver
 
 `DepthLimitedTurnSolver` is `SubgameSolver` with the river chance node replaced
-by a **net leaf**: at a river-entry it averages the net's river CFV over the
-runout (44 cards) and returns per-combo values (IP = zero-sum complement, a
-tiny-spike approximation whose error the metric then captures). Only training
-(`_walk`) is depth-limited; **exploitability is measured in the FULL turn+river
-game** — the net-driven turn strategy grafted onto the exact river continuation,
-best-responded with Slice-D's verified vectorized BR. So the reported number is
-the real cost of the net's approximation, exactly the L4 metric.
+by a **net leaf**. The leaf mirrors exactly what the chance node it replaces
+would do: for each river card it queries the net at the post-river belief,
+converts the prediction into the opponent-reach-weighted **counterfactual units**
+`_walk` propagates, masks the combos that river kills, and divides by the chance
+node's divisor. Only training (`_walk`) is depth-limited; **exploitability is
+measured in the FULL turn+river game** — the net-driven turn strategy grafted
+onto the exact river continuation, best-responded with Slice-D's verified
+vectorized BR. So the reported number is the real cost of the net's
+approximation, exactly the L4 metric.
+
+> **Units matter, and got this wrong once.** The first recorded run fed the
+> net's raw (normalized) output straight into `_walk`, which propagates
+> counterfactual values — opponent-reach-weighted. The leaf branch therefore
+> arrived **36–62× too small** (measured across fixture seeds), so turn CFR
+> effectively ignored the net, and IP's leaf used `-v0`, which assumes a
+> zero-sum-per-matchup subgame that dead money makes false. Both are fixed
+> (per-player heads + an explicit normalized↔counterfactual conversion), and the
+> numbers below are from the re-run. Regression tests pin the leaf's magnitude
+> against the branch it replaces and check that an *oracle*-leaf depth-limited
+> solve reproduces the full turn+river solve.
 
 Per Slice-G's warning, we measure exploitability **against the depth-limited
 oracle baseline, not a naively-glued full agent** (that agent's ~0.42 Leduc
@@ -47,35 +64,48 @@ fix — explicitly out of toy scope).
 
 Run: `run_spike(n_rows=3000, n_eval=20, seed=0, gen_iters=80, eval_iters=150,
 epochs=400, eval_keep_frac=0.10)` — a representative local-minutes spike
-(~12 min on CPU). `run_spike` defaults to ~1e4 rows for a production run.
+(~17 min on CPU). `run_spike` defaults to ~1e4 rows for a production run.
 
 | metric | value |
 |---|---|
 | data rows (river solves) | 3000 |
-| value-net held-out loss (masked MSE, bb²) | 29.06 |
+| value-net held-out loss (masked MSE over both heads, bb²) | 28.76 |
 | held-out eval subgames | 20 |
 | mean exploitability — **oracle** (exact turn+river) | **0.191 bb** |
-| mean exploitability — **net-driven** depth-limited turn | **6.500 bb** |
+| mean exploitability — **net-driven** depth-limited turn | **3.530 bb** |
 | go/no-go threshold | 0.75 bb |
-| **verdict** | **NO-GO** (net-driven 6.50 bb ≫ 0.75 bb bar) |
+| **verdict** | **NO-GO** (net-driven 3.53 bb ≫ 0.75 bb bar) |
+
+> **Superseded:** the original recorded run reported net-driven **6.500 bb**
+> (loss 29.06, oracle 0.191) under the leaf-units bug described above. That run
+> is superseded by the numbers in the table; the units fix cut the net-driven
+> figure roughly in half, and did not change the verdict.
 
 ## Go / no-go
 
 **NO-GO at spike scale.** The mechanism is validated — the exact turn+river
 oracle converges to a low **0.19 bb** exploitability baseline, and the harness
 measures the net-driven turn strategy in the *full* game with Slice-D's verified
-BR — but the value net at 3000-row scale (held-out loss **29 bb²**, i.e. an RMS
-CFV error of ~5 bb) is far too coarse: the net-driven depth-limited turn solve
-is **6.5 bb** exploitable, ~34× the oracle and ~9× the bar.
+BR — but the value net at 3000-row scale (held-out loss **28.8 bb²**, i.e. an
+RMS CFV error of ~5 bb) is far too coarse: the net-driven depth-limited turn
+solve is **3.53 bb** exploitable, ~18× the oracle and ~4.7× the bar.
+
+**What the re-run changed, honestly.** The previously recorded rationale claimed
+the 6.5 bb gap was "a data/accuracy result, not a mechanism bug". That claim was
+false when it was written — there *was* a mechanism bug (the leaf units), and it
+inflated the number by ~1.8×. With the bug fixed, the claim now actually holds:
+the remaining 3.53 bb is attributable to net accuracy, since the leaf is
+verified to enter CFR on the right scale and an oracle leaf reproduces the exact
+solve. The verdict is unchanged, but it is now supported by the evidence rather
+than in spite of it.
 
 This is the *expected* L4 outcome and mirrors Slice G's Leduc finding: a value
 net drives a depth-limited solver only as well as its CFV accuracy allows, and
 at toy data/compute scale that accuracy is nowhere near the ≤1 bb regime a
-trustworthy turn strategy needs. The gap is a **data/accuracy** result (the
-net), not a mechanism bug (the oracle and BR are exact). Larger runs shrink the
-loss and the gap, but closing it to the bar is a research-scale effort — out of
-toy scope (plan §7/§9), and nothing downstream depends on it: M4 tier-2 grading
-uses the *exact cached solves*, never this value net.
+trustworthy turn strategy needs. Larger runs shrink the loss and the gap, but
+closing it to the bar is a research-scale effort — out of toy scope (plan
+§7/§9), and nothing downstream depends on it: M4 tier-2 grading uses the *exact
+cached solves*, never this value net.
 
 ## What lands / what's out of scope
 
