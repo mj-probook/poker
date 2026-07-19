@@ -7,7 +7,7 @@ import numpy as np
 from pokerlab.engine.cards import card_from_str
 from pokerlab.solver import subgame as sg
 from pokerlab.solver.adapter import root_solution_by_class
-from pokerlab.solver.solve_io import insert_solution_index, load_solve, write_solve
+from pokerlab.solver.solve_io import load_solve, write_solve
 from pokerlab.store import db
 from pokerlab.types import Solution
 
@@ -75,13 +75,13 @@ def test_write_solve_and_load_roundtrip(tmp_path):
 
 def test_solution_index_insert_is_queryable():
     conn = db.connect(":memory:")
-    insert_solution_index(conn, "spotA", "solves/spotA.json", sg.SOLVER_VERSION, 0.004)
+    db.index_solution(conn, "spotA", "solves/spotA.json", sg.SOLVER_VERSION, 0.004)
     row = conn.execute("SELECT * FROM solution_index WHERE spot_key='spotA'").fetchone()
     assert row["path"] == "solves/spotA.json"
     assert row["solver_version"] == sg.SOLVER_VERSION
     assert abs(row["exploitability"] - 0.004) < 1e-12
     # upsert replaces
-    insert_solution_index(conn, "spotA", "solves/new.json", sg.SOLVER_VERSION, 0.003)
+    db.index_solution(conn, "spotA", "solves/new.json", sg.SOLVER_VERSION, 0.003)
     row = conn.execute("SELECT * FROM solution_index WHERE spot_key='spotA'").fetchone()
     assert row["path"] == "solves/new.json"
 

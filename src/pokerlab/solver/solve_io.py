@@ -57,19 +57,3 @@ def write_solve(solver: SubgameSolver, spot_key: str, path: str | Path | None = 
 
 def load_solve(path: str | Path) -> dict:
     return json.loads(Path(path).read_text())
-
-
-def insert_solution_index(conn: sqlite3.Connection, spot_key: str, path: str | Path,
-                          solver_version: str, exploitability: float) -> None:
-    """Insert/replace a ``solution_index`` row. ``conn`` is a schema-applied
-    connection (use ``store.db.connect``). Narrow local helper — the store layer
-    is Slice E's and is not extended here."""
-    conn.execute(
-        "INSERT INTO solution_index(spot_key, path, solver_version, exploitability)"
-        " VALUES (?, ?, ?, ?)"
-        " ON CONFLICT(spot_key) DO UPDATE SET"
-        "   path=excluded.path, solver_version=excluded.solver_version,"
-        "   exploitability=excluded.exploitability",
-        (spot_key, str(path), solver_version, float(exploitability)),
-    )
-    conn.commit()

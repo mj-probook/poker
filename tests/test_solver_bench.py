@@ -21,7 +21,7 @@ import pytest
 from pokerlab.engine.cards import card_from_str
 from pokerlab.solver import subgame as sg
 from pokerlab.solver.flops25 import build_solver, load_flops25, range_vectors
-from pokerlab.solver.solve_io import insert_solution_index, write_solve
+from pokerlab.solver.solve_io import write_solve
 from pokerlab.store import db
 
 pytestmark = pytest.mark.bench
@@ -51,7 +51,7 @@ def test_fixture_river_spots_meet_accuracy_bar(idx, tmp_path):
     spot_key = f"{entry['iso_class']}:{entry['texture']}|40|BTNopen_BBcall|river"
     path, expl_bb = write_solve(s, spot_key=spot_key, path=tmp_path / "solve.json")
     conn = db.connect(":memory:")
-    insert_solution_index(conn, spot_key, path, sg.SOLVER_VERSION, expl_bb / s.pot0)
+    db.index_solution(conn, spot_key, path, sg.SOLVER_VERSION, expl_bb / s.pot0)
     assert conn.execute("SELECT count(*) c FROM solution_index").fetchone()["c"] == 1
 
 

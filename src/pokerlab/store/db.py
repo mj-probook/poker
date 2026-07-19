@@ -129,15 +129,19 @@ def get_imported_hand(conn: sqlite3.Connection, hand_id: int) -> dict | None:
 # --------------------------------------------------------------------------- #
 # solution_index (tier-2 library: a spot_key hit means we can grade exactly)
 # --------------------------------------------------------------------------- #
-def index_solution(conn: sqlite3.Connection, spot_key: str, path: str,
+def index_solution(conn: sqlite3.Connection, spot_key: str, path: str | Path,
                    solver_version: str, exploitability: float) -> None:
+    """Insert/replace a ``solution_index`` row (upsert on ``spot_key``).
+
+    Accepts a ``Path`` because ``solve_io.write_solve`` returns one.
+    """
     conn.execute(
         "INSERT INTO solution_index(spot_key, path, solver_version, exploitability)"
         " VALUES (?, ?, ?, ?)"
         " ON CONFLICT(spot_key) DO UPDATE SET path=excluded.path,"
         "   solver_version=excluded.solver_version,"
         "   exploitability=excluded.exploitability",
-        (spot_key, path, solver_version, float(exploitability)),
+        (spot_key, str(path), solver_version, float(exploitability)),
     )
     conn.commit()
 

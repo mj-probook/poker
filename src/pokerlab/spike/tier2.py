@@ -25,7 +25,7 @@ from pokerlab.engine.cards import card_to_str
 from pokerlab.hh.decisions import Decision, hand_label
 from pokerlab.solver import subgame as sg
 from pokerlab.solver.adapter import root_solution_by_class
-from pokerlab.solver.solve_io import insert_solution_index, load_solve, write_solve
+from pokerlab.solver.solve_io import load_solve, write_solve
 from pokerlab.solver.spotkey import resolve_spot_key
 from pokerlab.store import db
 from pokerlab.types import Solution, TIER_SOLVER
@@ -209,8 +209,8 @@ def _solve_gated(conn, d: Decision, *, iters: int, cfg: sg.BetConfig,
         key = tier2_key(d)
         if persist:
             path, expl = write_solve(solved, key)
-            insert_solution_index(conn, key, path, sg.SOLVER_VERSION,
-                                  expl / solved.pot0)
+            db.index_solution(conn, key, path, sg.SOLVER_VERSION,
+                              expl / solved.pot0)
         return key, _hero_solution(d, solved)
     except sg.DegenerateRangeError as exc:
         # No legal hero/villain matchup: re-solving cannot ever help, so this is
