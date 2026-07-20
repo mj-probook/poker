@@ -12,21 +12,21 @@ import sqlite3
 
 def worst_leak_categories(conn: sqlite3.Connection, limit: int = 5,
                           min_attempts: int = 1) -> list[dict]:
-    """Drill spot_keys ranked by error rate (worst first).
+    """Drill leak_keys ranked by error rate (worst first).
 
     error_rate = fraction of attempts marked incorrect. Ties break toward the
     more-practised category (more attempts -> higher confidence in the rate).
     `min_attempts` filters out categories with too little data to rank.
     """
     rows = conn.execute(
-        "SELECT spot_key,"
+        "SELECT leak_key,"
         "       COUNT(*)                AS attempts,"
         "       SUM(1 - correct)        AS errors,"
         "       1.0 - AVG(correct)      AS error_rate"
         "  FROM drill_attempts"
-        " GROUP BY spot_key"
+        " GROUP BY leak_key"
         " HAVING COUNT(*) >= ?"
-        " ORDER BY error_rate DESC, attempts DESC, spot_key"
+        " ORDER BY error_rate DESC, attempts DESC, leak_key"
         " LIMIT ?",
         (min_attempts, limit),
     )

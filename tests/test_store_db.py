@@ -27,7 +27,7 @@ def test_insert_and_read_drill_attempt():
     rows = db.drill_attempts(conn)
     assert len(rows) == 1
     assert rows[0]["id"] == rid
-    assert rows[0]["spot_key"] == "SBjam:10bb"
+    assert rows[0]["leak_key"] == "SBjam:10bb"
     assert rows[0]["correct"] == 1
 
 

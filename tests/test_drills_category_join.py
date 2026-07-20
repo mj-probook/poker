@@ -41,8 +41,8 @@ def test_hh_leak_joins_drill_generator_and_scheduler() -> None:
     d = extract_decisions(parsed)[0]
     assert key == jamfold_category("SB", d.eff_bb)  # depth-bucketed spot
 
-    # 2. the drill generator emits a drill with EXACTLY that spot_key.
-    assert key in {dr.spot_key for dr in jamfold_drills()}
+    # 2. the drill generator emits a drill with EXACTLY that leak_key.
+    assert key in {dr.leak_key for dr in jamfold_drills()}
 
     # 3. persisted, the HH leak surfaces in the tiers-1/2 leak report...
     conn = db.connect()
@@ -52,7 +52,7 @@ def test_hh_leak_joins_drill_generator_and_scheduler() -> None:
     # ...and drilling that same category shows up in the drill-attempt report.
     for ok in (0, 0, 1):
         db.insert_drill_attempt(conn, key, "jamfold", "fold", bool(ok), 0.0, AT)
-    assert any(r["spot_key"] == key for r in worst_leak_categories(conn))
+    assert any(r["leak_key"] == key for r in worst_leak_categories(conn))
 
     # 4. SM-2 schedules the category and next-due selection picks it up.
     schedule_attempt(conn, key, correct=False, now=NOW)

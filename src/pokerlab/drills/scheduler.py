@@ -159,7 +159,7 @@ def select_next(conn: sqlite3.Connection, now: datetime,
     never-drilled category, then the soonest-due one.
 
     `categories` is the caller's full category vocabulary — normally every
-    `spot_key` the drill generator can emit. Without it this can only ever
+    `leak_key` the drill generator can emit. Without it this can only ever
     return a key that is already in `sr_state`, and `sr_state` is only written
     by *answering* a drill: the first category answered becomes the only one
     ever served again (round-2 finding [E42]). Passing the population makes
@@ -177,7 +177,7 @@ def select_next(conn: sqlite3.Connection, now: datetime,
     if not states and not known:
         return None
 
-    err = {r["spot_key"]: r["error_rate"]
+    err = {r["leak_key"]: r["error_rate"]
            for r in views.worst_leak_categories(conn, limit=10_000)}
     due = [s for s in states if _is_due(s, now)]
     if due:

@@ -42,7 +42,9 @@ END;
 
 CREATE TABLE IF NOT EXISTS drill_attempts(
   id INTEGER PRIMARY KEY,
-  spot_key TEXT NOT NULL,
+  -- Same canonical 4-part key as gradings.leak_key (see above) — that identity
+  -- is the whole point: an HH-detected leak selects the drill that trains it.
+  leak_key TEXT NOT NULL,
   kind TEXT NOT NULL,
   chosen TEXT NOT NULL,
   correct INTEGER NOT NULL,
@@ -71,6 +73,8 @@ CREATE TABLE IF NOT EXISTS batch_queue(
   -- types.SpotKey, which also carries stack and board buckets. It is handed to
   -- the drain solver alongside the re-derived decision, which is what actually
   -- carries the board/pot/stack, so the label only has to group the backlog.
+  -- (This is now the ONLY 'spot_key' in the schema that is not a types.SpotKey;
+  -- drill_attempts.spot_key was the third meaning and is now leak_key.)
   spot_key TEXT NOT NULL,
   hand_id INTEGER NOT NULL,
   decision_idx INTEGER NOT NULL,

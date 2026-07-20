@@ -58,7 +58,7 @@ def test_answer_scores_and_persists(client):
     assert "explanation" in body and "jam" in body["explanation"]
     # attempt was persisted to drill_attempts
     con = sqlite3.connect(client.db_path)
-    rows = con.execute("SELECT spot_key, correct FROM drill_attempts").fetchall()
+    rows = con.execute("SELECT leak_key, correct FROM drill_attempts").fetchall()
     assert rows == [("SBjam|preflop|jam|10", 1)]
 
 
@@ -101,7 +101,7 @@ def test_index_and_static_served(client):
 def test_long_correct_streak_never_500s_and_covers_the_population(client):
     from pokerlab.drills import generator as gen
 
-    all_cats = {d.spot_key for d in gen.default_population()}
+    all_cats = {d.leak_key for d in gen.default_population()}
     seen: set[str] = set()
 
     for _ in range(300):
@@ -149,7 +149,7 @@ def test_one_category_driven_past_the_old_overflow_point(client):
     from pokerlab.drills import generator as gen
 
     cat = "SBjam|preflop|jam|5"
-    drills = [d for d in gen.default_population() if d.spot_key == cat]
+    drills = [d for d in gen.default_population() if d.leak_key == cat]
     assert len(drills) >= 30, "need distinct drills in one category"
 
     for drill in drills[:30]:                       # 30 > the old rep-14 cliff

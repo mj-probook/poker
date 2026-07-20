@@ -24,12 +24,12 @@ def test_worst_leak_categories_ranked_by_error_rate():
     conn = db.connect(":memory:")
     _seed(conn)
     worst = views.worst_leak_categories(conn, limit=5)
-    assert worst[0]["spot_key"] == "SBjam:10bb"
+    assert worst[0]["leak_key"] == "SBjam:10bb"
     assert worst[0]["attempts"] == 4
     assert worst[0]["errors"] == 3
     assert worst[0]["error_rate"] == pytest.approx(0.75)
     # the better category ranks below it
-    assert worst[1]["spot_key"] == "BBcall:10bb"
+    assert worst[1]["leak_key"] == "BBcall:10bb"
     assert worst[1]["error_rate"] == pytest.approx(0.25)
 
 
@@ -38,7 +38,7 @@ def test_worst_leak_categories_respects_min_attempts():
     db.insert_drill_attempt(conn, "rare:5bb", "jamfold", "fold", False, 0.0, "t0")
     _seed(conn)
     worst = views.worst_leak_categories(conn, limit=5, min_attempts=4)
-    keys = {w["spot_key"] for w in worst}
+    keys = {w["leak_key"] for w in worst}
     assert "rare:5bb" not in keys        # only 1 attempt -> filtered out
     assert "SBjam:10bb" in keys
 

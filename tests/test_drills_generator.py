@@ -17,11 +17,11 @@ def test_jamfold_population_covers_syllabus():
     drills = gen.jamfold_drills()
     assert len(drills) == 169 * 2 * len(gen.DEPTHS)
     # one category per (position, depth)
-    assert len({d.spot_key for d in drills}) == 2 * len(gen.DEPTHS)
+    assert len({d.leak_key for d in drills}) == 2 * len(gen.DEPTHS)
     sb = [d for d in drills if d.position == "SB"]
     assert all(d.legal_actions == ("jam", "fold") for d in sb)
     assert all(d.pot_bb == 2.0 * d.depth_bb for d in drills)
-    assert all(d.drill_id == f"{d.spot_key}:{d.hand_label}" for d in drills)
+    assert all(d.drill_id == f"{d.leak_key}:{d.hand_label}" for d in drills)
 
 
 def test_jamfold_drill_carries_chart_solution():

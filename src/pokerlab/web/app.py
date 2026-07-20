@@ -71,8 +71,8 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     by_id = {d.drill_id: d for d in population}
     by_cat: dict[str, list[gen.Drill]] = {}
     for d in population:
-        by_cat.setdefault(d.spot_key, []).append(d)
-    default_cat = population[0].spot_key
+        by_cat.setdefault(d.leak_key, []).append(d)
+    default_cat = population[0].leak_key
 
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
@@ -105,10 +105,10 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             now = datetime.now(timezone.utc)
-            db.insert_drill_attempt(conn, drill.spot_key, drill.kind, ans.action,
+            db.insert_drill_attempt(conn, drill.leak_key, drill.kind, ans.action,
                                     result.correct, result.ev_loss_bb,
                                     now.isoformat())
-            sch.schedule_attempt(conn, drill.spot_key, result.correct, now)
+            sch.schedule_attempt(conn, drill.leak_key, result.correct, now)
             payload = {
                 "drill_id": drill.drill_id,
                 "correct": result.correct,

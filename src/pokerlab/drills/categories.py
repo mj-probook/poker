@@ -2,7 +2,7 @@
 
 Drills OWN this vocabulary; the HH pipeline imports it (dependency direction
 hh → drills, matching hh's existing use of drills.scoring). One key format is
-shared by drill spot_keys, SM-2 leak_keys, and HH gradings.leak_key so the
+shared by drill leak_keys, SM-2 leak_keys, and HH gradings.leak_key so the
 leak report, the drill generator, and the scheduler all join on the same
 categories:
 

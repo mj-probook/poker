@@ -40,13 +40,13 @@ def connect(path: str | Path = ":memory:", *, check_same_thread: bool = True
 # --------------------------------------------------------------------------- #
 # drill_attempts
 # --------------------------------------------------------------------------- #
-def insert_drill_attempt(conn: sqlite3.Connection, spot_key: str, kind: str,
+def insert_drill_attempt(conn: sqlite3.Connection, leak_key: str, kind: str,
                          chosen: str, correct: bool, ev_loss: float,
                          ts: str) -> int:
     cur = conn.execute(
-        "INSERT INTO drill_attempts(spot_key, kind, chosen, correct, ev_loss, ts)"
+        "INSERT INTO drill_attempts(leak_key, kind, chosen, correct, ev_loss, ts)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (spot_key, kind, chosen, int(bool(correct)), float(ev_loss), ts),
+        (leak_key, kind, chosen, int(bool(correct)), float(ev_loss), ts),
     )
     conn.commit()
     return int(cur.lastrowid)
