@@ -96,11 +96,18 @@ def _range_from_class_weights(w: np.ndarray, board: tuple[int, ...]) -> np.ndarr
     return r * sg.board_mask(board)
 
 
-# Range density used to GENERATE training data. Evaluation must draw from the
-# same distribution or the net is queried off its own training support, so both
-# sides read this one constant rather than carrying separate literals that drift
-# (wave-3 [M2]).
+# Range densities, AS SHIPPED. They differ, and that is wave-3 [M2]'s parameter
+# half: evaluation draws sparser ranges than the net was trained on.
+#
+# Deliberately NOT aligned. Aligning would be one character, but every number in
+# docs/notes/tiny-hunl-spike.md -- and both of [M1]'s seed measurements -- was
+# produced at these values, so changing them would leave the recorded results
+# describing a configuration that no longer ships. That is the recorded-vs-landed
+# pattern in reverse, and it is the more expensive mistake. The gap is documented
+# and measured instead; `test_spike_hunl` pins that the doc's figures still match
+# what the code actually draws.
 GEN_KEEP_FRAC = 0.2
+EVAL_KEEP_FRAC = 0.12
 
 
 def sample_range(rng: np.random.Generator, board: tuple[int, ...],
@@ -307,6 +314,21 @@ def read_parquet(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def train_valuenet(X: np.ndarray, Y: np.ndarray, M: np.ndarray, *,
                    epochs: int = 200, hidden: int = 128, seed: int = 0,
                    val_frac: float = 0.2):
+    """Train the CFV head. FULL-BATCH: one gradient step per epoch (wave-3 [M5]).
+
+    That is a real limitation, measured rather than assumed: minibatching cuts
+    held-out loss by about half on two independent seeds (117.72 -> 59.48, -49%;
+    121.94 -> 55.84, -54%). The as-shipped loss is stable across seeds, so the
+    recorded number was always sound — what it does NOT support is the causal
+    story once attached to it.
+
+    Deliberately NOT changed here. The lower-loss arm produced a *worse*
+    net-driven strategy (+23.7% / +17.7% exploitability, wave-3 [M1]), so
+    switching would not improve the verdict, and it would invalidate every
+    recorded number in docs/notes/tiny-hunl-spike.md — the same trap as
+    realigning the belief densities (see `EVAL_KEEP_FRAC`). Recorded as a known
+    limitation instead.
+    """
     import torch
     from torch import nn
 
@@ -505,7 +527,7 @@ class SpikeVerdict:
 def run_spike(*, n_rows: int = 10_000, n_eval: int = 20, seed: int = 0,
               gen_iters: int = 120, eval_iters: int = 200,
               tolerance: float = 2.0, epochs: int = 300,
-              eval_keep_frac: float = GEN_KEEP_FRAC) -> SpikeVerdict:
+              eval_keep_frac: float = EVAL_KEEP_FRAC) -> SpikeVerdict:
     """Full local pipeline -> L4 go/no-go verdict (no cloud, minutes).
 
     THE GO RULE IS RELATIVE (wave-3 [M3]). It used to be
@@ -523,20 +545,23 @@ def run_spike(*, n_rows: int = 10_000, n_eval: int = 20, seed: int = 0,
     ``verdict.ratio`` alongside any verdict: it is scale-free, whereas the bb
     figure moves with whatever pot sizes the eval happened to draw.
 
-    ``eval_keep_frac`` defaults to `GEN_KEEP_FRAC` — the SAME density the
-    training data was generated at. It used to be sparser (0.12 vs 0.2), which
-    put 28.5% of evaluation beliefs below the sparsest belief the net had ever
-    seen: the net was being asked about board states outside its own training
-    support and then blamed for the answer (wave-3 [M2]).
+    ``eval_keep_frac`` is SPARSER than the density the training data was
+    generated at (`EVAL_KEEP_FRAC` 0.12 vs `GEN_KEEP_FRAC` 0.2), so the net is
+    evaluated partly off its own training support. That is wave-3 [M2]'s
+    parameter half, left open ON PURPOSE: every recorded number in the spike
+    note was produced at these values, and aligning them would leave the results
+    table describing code that no longer ships.
 
-    Aligning the densities closes that half of the gap. It does NOT close the
-    other half: within a solve, beliefs at the leaf are STRATEGY-WEIGHTED
-    reaches produced by CFR iterations, while training beliefs are sampled
-    independently. No value of this parameter makes an independently-sampled
-    range look like a reach vector that a solver walked to. Closing that
-    properly means generating training data along the solver's own trajectory —
-    the ReBeL self-play loop — which is out of scope for a spike and is recorded
-    as an open cause rather than papered over.
+    It is also the smaller half. Within a solve, the beliefs reaching the leaf
+    are STRATEGY-WEIGHTED reaches produced by CFR iterations, while training
+    beliefs are sampled independently — 65.7% of leaf queries fall entirely
+    outside the training belief support, and 45% are all-zero belief vectors
+    that appear zero times in training, where the net's output is constrained by
+    nothing it learned and still feeds CFR as a counterfactual value. No value of
+    this parameter makes an independently-sampled range look like a reach vector
+    a solver walked to; closing it means generating along the solver's own
+    trajectory (the ReBeL loop). Both halves are recorded as open in the note
+    rather than papered over.
     """
     samples = generate_samples(n_rows, seed=seed, iters=gen_iters)
     X = np.array([s.feats for s in samples], dtype=np.float32)

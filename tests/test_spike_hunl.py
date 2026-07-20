@@ -341,37 +341,54 @@ def test_run_spike_tiny_produces_verdict():
 # keep_fracs are equal", which a later refactor could satisfy while still
 # drawing from different distributions.
 # --------------------------------------------------------------------------- #
-def test_eval_beliefs_lie_within_the_training_belief_support():
+def _mean_nonzero_classes(keep_frac, *, seed=0, n=250):
+    """Mean number of hand classes a sampled range gives weight to.
+
+    Stated convention so the figure is reproducible: non-zero CLASSES (not
+    combos) in ranges drawn by `sample_range`, seed 0, n=250.
+    """
     import numpy as np
 
-    rng = np.random.default_rng(0)
+    from pokerlab.charts import hands
+    from pokerlab.solver.adapter import COMBO_INDEX
 
-    def live_counts(keep_frac, n=150):
-        out = []
-        for _ in range(n):
-            board = hunl._deal_board(rng, 5)
-            r = hunl.sample_range(rng, board, keep_frac=keep_frac)
-            if r.sum() > 0:
-                out.append(int((r > 0).sum()))
-        return np.array(out)
-
-    train = live_counts(hunl.GEN_KEEP_FRAC)
-    # what run_spike's own default now draws for evaluation
-    import inspect
-    eval_kf = inspect.signature(hunl.run_spike).parameters["eval_keep_frac"].default
-    held_out = live_counts(eval_kf)
-
-    below = (held_out < train.min()).mean()
-    assert below == 0.0, (
-        f"{below:.1%} of eval beliefs are sparser than ANY training belief "
-        f"(train min {train.min()}, eval min {held_out.min()}): the net is being "
-        "queried off its own training support")
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        board = hunl._deal_board(rng, 5)
+        r = hunl.sample_range(rng, board, keep_frac=keep_frac)
+        if r.sum() == 0:
+            continue
+        out.append(sum(
+            1 for cls in hands.HAND_CLASSES
+            if any(r[COMBO_INDEX[(min(a, b), max(a, b))]] > 0
+                   for a, b in hands.card_combos(cls))))
+    return float(np.mean(out))
 
 
-def test_the_generation_density_is_shared_not_duplicated():
-    """The invariant above is only durable if one constant feeds both sides."""
-    import inspect
-    assert (inspect.signature(hunl.run_spike).parameters["eval_keep_frac"].default
-            is hunl.GEN_KEEP_FRAC)
-    assert (inspect.signature(hunl.sample_range).parameters["keep_frac"].default
-            is hunl.GEN_KEEP_FRAC)
+def test_the_documented_belief_sparsity_gap_matches_the_shipped_config():
+    """[M2] parameter half — pins the DOC against the CODE, both as shipped.
+
+    The gap is deliberately NOT closed: every recorded number in
+    docs/notes/tiny-hunl-spike.md, and both of [M1]'s seed measurements, were
+    produced at these densities, so aligning them would leave the results table
+    describing code that no longer ships.
+
+    So the invariant worth pinning is not "the densities are equal" but "the
+    documented gap is the real one". This fails if anyone changes either density
+    without updating the note — including anyone who "helpfully" aligns them.
+    """
+    gen = _mean_nonzero_classes(hunl.GEN_KEEP_FRAC)
+    ev = _mean_nonzero_classes(hunl.EVAL_KEEP_FRAC)
+
+    assert ev < gen, "evaluation must still be the sparser draw"
+    # the figures quoted in the spike note's belief-axis section
+    assert gen == pytest.approx(34.2, abs=0.5), f"doc says gen 34.2, measured {gen:.1f}"
+    assert ev == pytest.approx(20.3, abs=0.5), f"doc says eval 20.3, measured {ev:.1f}"
+
+
+def test_the_two_densities_are_not_silently_equalised():
+    """A guard with teeth: alignment is the change the note forbids."""
+    assert hunl.EVAL_KEEP_FRAC != hunl.GEN_KEEP_FRAC, (
+        "densities were aligned — every recorded number in the spike note now "
+        "describes a configuration that no longer ships. See [M2].")

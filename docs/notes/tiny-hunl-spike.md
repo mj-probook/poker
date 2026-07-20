@@ -120,9 +120,12 @@ corrected here rather than carried forward.
 **NO-GO at spike scale.** The mechanism is validated — the exact turn+river
 oracle converges to a low **0.19 bb** exploitability baseline, and the harness
 measures the net-driven turn strategy in the *full* game with Slice-D's verified
-BR — but the value net at 3000-row scale is far too coarse, leaving **52% of
-the target CFV variance unexplained**: the net-driven depth-limited turn solve
-is **3.26 bb** exploitable, **17.1× the oracle**.
+BR. The net-driven depth-limited turn solve is **3.26 bb** exploitable,
+**17.1× the oracle**. The held-out CFV loss leaves **52% of the target variance
+unexplained**.
+
+Those are two measurements, stated side by side. What this note previously did
+was join them with "because", and that link is now falsified — see below.
 
 **The go rule is now relative (wave-3 [M3]).** It used to be an absolute
 `≤ 0.75 bb`, a constant with no derivation behind it, compared against nothing —
@@ -135,10 +138,82 @@ figure moves with whatever pot sizes the eval happens to draw, the ratio does
 not. The verdict is unchanged and robust either way — 17× is not near any
 plausible tolerance.
 
-**It took three runs to earn that sentence.** The first write-up asserted the
-gap was "a data/accuracy result, not a mechanism bug". That was false when
-written — there were *two* independent harness bugs, and both had to be fixed
-before the claim could be made honestly:
+### The causal chain this note used to assert is FALSIFIED (wave-3 [M1])
+
+The claim was: the net's held-out CFV loss is too high, and *therefore* the
+net-driven solver is exploitable. A pre-registered contrast tested it directly
+by training a net with substantially LOWER held-out loss and measuring the
+exploitability it produced.
+
+| training regime | held-out CFV loss | net-driven exploitability |
+|---|---|---|
+| as shipped (full-batch), seed 0 | 117.72 | **3.257 bb** (oracle 0.191) |
+| lower-loss (minibatch), seed 0 | 59.48 (−49%) | **4.028 bb** (+23.7% WORSE) |
+| as shipped (full-batch), seed 1 | 121.94 | **3.330 bb** (oracle 0.154) |
+| lower-loss (minibatch), seed 1 | 55.84 (−54%) | **3.919 bb** (+17.7% WORSE) |
+
+Halving the loss made the strategy *worse*, on two independent draws. So the
+"because" was never established: it was a plausible story fitted to a single
+run, and it is the third defect of this exact shape in this document's history
+(see the two below).
+
+The training loop is **full-batch** — one gradient step per epoch — which is a
+real limitation (wave-3 [M5]) and is what the lower-loss arm changes. Note the
+as-shipped loss is stable across seeds (117.72 / 121.94): the recorded *number*
+was always sound. It is the "because" attached to it that failed.
+
+Three guards on how far that result may be pushed:
+
+* **Two seeds buy independence on the data axis only.** This is "not
+  dataset-specific". It is **not** "not an artifact" — both arms share one
+  evaluation protocol, and the belief-support gap below remains a live
+  candidate artifact.
+* **n = 20 held-out subgames per arm, and no dispersion was measured.** This is
+  real evidence, not a significance claim.
+* The safe statement, and no stronger one: **held-out CFV loss is not a
+  reliable proxy for net-driven exploitability in this harness.**
+
+The *measurements* in this note stand and reproduce. What was wrong was the
+mechanism attached to them. The NO-GO verdict is unaffected — every arm
+measured is 17–26× the oracle — and is robust either way.
+
+### The most mechanical candidate explanation: the belief axis (wave-3 [M2])
+
+Offered as a **candidate**, not an established cause.
+
+The net is queried, inside CFR, on beliefs it was never trained on — and not
+merely shifted, but largely disjoint:
+
+* **65.7% of leaf queries fall entirely outside the training belief support**
+  (training ranges span 14–53 non-zero classes; queries span 0–29).
+* **45% of queries are all-zero belief vectors**, which occur zero times in
+  training. The net's output there is constrained by nothing it learned, and it
+  still feeds into CFR as a counterfactual value.
+
+This has two halves, and both are open:
+
+* **The parameter half.** Evaluation draws sparser ranges than data generation
+  (`EVAL_KEEP_FRAC` 0.12 vs `GEN_KEEP_FRAC` 0.2 — a measured **20.3 vs 34.2**
+  mean non-zero classes, seed 0, n=250). One character would close it. It is
+  deliberately left open: every number in this note, and both of [M1]'s seed
+  measurements, were produced at these densities, so aligning them would leave
+  the results table describing a configuration that no longer ships. That is the
+  recorded-vs-landed failure in reverse, and the more expensive mistake.
+  `test_spike_hunl` pins the documented gap against the code so neither can move
+  without the other.
+* **The structural half, which no parameter closes.** Beliefs reaching the leaf
+  are *strategy-weighted reaches* produced by CFR iterations; training beliefs
+  are sampled independently. No value of any density parameter makes an
+  independently-sampled range look like a reach vector a solver walked to.
+  Closing it means generating training data along the solver's own trajectory —
+  the ReBeL self-play loop. That is a design change, not a tuning one, and it is
+  recorded here as open rather than papered over.
+
+### Two harness bugs preceded all of this
+
+The first write-up asserted the gap was "a data/accuracy result, not a mechanism
+bug". That was false when written — there were *two* independent harness bugs,
+and both had to be fixed before any claim could be made honestly:
 
 1. **Leaf units.** The net's normalized output was fed straight into `_walk`,
    which propagates opponent-reach-weighted counterfactual values, so the leaf
@@ -152,19 +227,22 @@ before the claim could be made honestly:
    **75% of the states the leaf actually queries fell outside the training
    support.**
 
-Only now, with the leaf verified to enter CFR on the right scale (an oracle leaf
-reproduces the exact solve) and queried on-distribution (data-gen samples the
-same reachable `(pot, stack)` set the leaf sees), is the remaining gap
-attributable to net accuracy. Note the fixes moved the *number* very little
-(6.50 → 3.53 → 3.26 bb): the verdict was never in doubt, but the reasoning
-behind it was wrong twice.
+The leaf now enters CFR on the right scale (an oracle leaf reproduces the exact
+solve) and is queried at the reachable `(pot, stack)` states data-gen samples.
+The fixes moved the *number* very little (6.50 → 3.53 → 3.26 bb): the verdict
+was never in doubt, but the reasoning behind it was wrong — and, per [M1] above,
+the third attempt at a mechanism was wrong too. **The remaining gap is
+unattributed.** Net accuracy is no longer a supportable explanation for it,
+because lowering the loss made the strategy worse.
 
-This is the *expected* L4 outcome and mirrors Slice G's Leduc finding: a value
-net drives a depth-limited solver only as well as its CFV accuracy allows, and
-at toy data/compute scale that accuracy is nowhere near the ≤1 bb regime a
-trustworthy turn strategy needs. Larger runs shrink the loss and the gap, but
-closing it to the bar is a research-scale effort — out of toy scope (plan
-§7/§9), and nothing downstream depends on it: M4 tier-2 grading uses the *exact
+The NO-GO itself is the expected L4 outcome: a depth-limited solver on a learned
+leaf, at toy data and compute scale, lands nowhere near the regime a trustworthy
+turn strategy needs. What this note can no longer say is *why* — "larger runs
+shrink the loss and therefore the gap" is precisely the inference [M1]
+falsified. Scaling may still close it; this spike provides no evidence that it
+would, and the belief-axis gap above is the more mechanical candidate.
+
+Nothing downstream depends on the answer: M4 tier-2 grading uses the *exact
 cached solves*, never this value net.
 
 ## What lands / what's out of scope
