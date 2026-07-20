@@ -71,11 +71,17 @@ MAX_INTERVAL_DAYS = 365.0
 # against a formula predicting 6, 12, 14, 14.
 #
 # The saturation is set by a DIFFERENT knob than the ceiling: it is SHARE_CAP
-# arithmetic, roughly ceil(1 / SHARE_CAP) = 3 categories to keep each under the
-# share bound, plus one more in churn. So raising RUN_CAP or the vocabulary
-# moves the ceiling and changes nothing here; only SHARE_CAP moves the floor a
-# struggling user actually experiences. Tune the one that governs the case you
-# care about.
+# arithmetic, ceil(1 / SHARE_CAP) categories to fill the window under the share
+# bound, plus one more in churn. So raising RUN_CAP or the vocabulary moves the
+# ceiling and changes nothing here; only SHARE_CAP moves the floor a struggling
+# user actually experiences. Tune the one that governs the case you care about.
+#
+# PINNED by test_a_struggling_user_still_sees_the_share_bound_worth_of_variety,
+# which asserts the DERIVED form rather than the literal 4, so retuning
+# SHARE_CAP moves both sides together (verified at c = 0.5/0.4/0.34/0.25/0.2/
+# 0.125 -> 3/4/4/5/6/9). Until round-4 [8] this measurement lived here as prose
+# only, which is a number nobody re-runs: prose degrades silently, and only a
+# test fails. Read that test, not this comment, for what the scheduler does now.
 CONSECUTIVE_SERVE_CAP = 2
 SHARE_WINDOW = 40        # trailing serves the share is measured over
 SHARE_CAP = 0.40         # max fraction of that window one category may hold

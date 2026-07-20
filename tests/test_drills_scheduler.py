@@ -5,6 +5,7 @@ first among those currently due. All time is injected (fixed `now`) so the
 schedule is deterministic.
 """
 
+import math
 from datetime import datetime, timedelta
 
 import pytest
@@ -358,3 +359,67 @@ def test_the_cap_still_lets_every_other_category_through():
         served.append(_serve_and_answer(conn, cats, now, failing=cats[0]))
         now += timedelta(minutes=1)
     assert set(served) == set(cats), f"never served {set(cats) - set(served)}"
+
+
+# --------------------------------------------------------------------------- #
+# The struggling user's regime. The test above deliberately declines to pin a
+# coverage NUMBER, and that scoping is correct for its own regime: under a
+# mixed policy the achieved count really is a function of vocabulary size and
+# session length (measured all-correct: D=6/12/32/64 -> 6/12/32/64), so a bare
+# number there would bake today's syllabus into a scheduler test.
+#
+# It does not follow that no count is pinnable. Under an ALL-WRONG policy the
+# achieved count stops responding to either variable and becomes a constant set
+# by SHARE_CAP alone (round-4 [8]). That regime is not a corner case — it is the
+# user this scheduler exists for.
+# --------------------------------------------------------------------------- #
+def test_a_struggling_user_still_sees_the_share_bound_worth_of_variety():
+    """Everything wrong: the achieved variety is SHARE_CAP's, not the syllabus's.
+
+    When every answer is incorrect, every category lapses due-now and none can
+    rank its way out, so the due pool is saturated and ranking cannot spread the
+    session. What spreads it is the share bound alone: one category may hold at
+    most SHARE_CAP of the trailing window, so it takes ceil(1 / SHARE_CAP)
+    categories to fill that window, plus one more circulating through churn.
+
+    Asserted against the DERIVED form rather than the literal 4, which is what
+    makes it immune to the objection that sank a coverage count in the test
+    above: it encodes no syllabus fact. There is no vocabulary size and no
+    session length in `expected` — only the constant that actually governs this
+    regime. Retune SHARE_CAP and both sides move together by construction;
+    verified at c = 0.5/0.4/0.34/0.25/0.2/0.125 giving 3/4/4/5/6/9, achieved
+    matching derived at every point including the non-reciprocal 0.34. So this
+    fails when the RELATIONSHIP breaks, which is the thing worth knowing, and
+    not merely when someone edits a number.
+
+    D and S are a probe point, not a claim: 4 was measured invariant across
+    D=6..64 and S=40..150, so any pair in that box tests the same property.
+
+    The value of pinning it: this constant lived only in a comment
+    (`scheduler.py` above CONSECUTIVE_SERVE_CAP), and a measured number in prose
+    is one nobody re-runs. Raising RUN_CAP or tripling the vocabulary moves the
+    upper bound and changes nothing here — only SHARE_CAP moves the floor a
+    struggling user actually experiences, and that is the number a tuner needs
+    to see move.
+    """
+    D, S = 32, 80                       # interior of the measured-invariant box
+    expected = math.ceil(1 / sch.SHARE_CAP) + 1
+    conn = db.connect()
+    cats = [f"cat{i}|preflop|jam|10" for i in range(D)]
+    now = NOW
+    served = []
+    for _ in range(S):
+        key = sch.select_next(conn, now, categories=cats)
+        assert key is not None, "the scheduler must always have something to serve"
+        served.append(key)
+        db.insert_drill_attempt(conn, key, "jamfold", "fold", False, 0.0,
+                                now.isoformat())
+        sch.schedule_attempt(conn, key, False, now)
+        now += timedelta(minutes=1)
+
+    assert len(set(served)) == expected, (
+        f"a struggling user saw {len(set(served))} distinct categories over {S} "
+        f"serves of a {D}-category syllabus; SHARE_CAP={sch.SHARE_CAP} predicts "
+        f"{expected}. If SHARE_CAP was just retuned this is the floor moving as "
+        f"intended — update nothing, the derived form tracked it. If it was NOT, "
+        f"the share bound is no longer what governs this regime.")
