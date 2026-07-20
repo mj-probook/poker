@@ -37,7 +37,17 @@ def test_get_next_icm_spot_carries_tournament(client):
     # select_next was starved to a single category (round-2 finding [E42]).
     # Now that unseen categories are reachable, the ICM set is arrived at by
     # actually drilling, which is the behaviour worth pinning.
-    for _ in range(40):
+    #
+    # The walk budget is DERIVED from the vocabulary, not a constant: the ICM
+    # set is 2 categories out of N, so the number of drills needed to reach it
+    # scales with N. A hardcoded 40 silently went stale the moment the ante
+    # buckets tripled the vocabulary from 12 to 32 (round-3 finding [E49]) --
+    # ICM then first appeared at iteration 50 and this read as a scheduler
+    # regression. Deriving it means the next vocabulary change cannot repeat
+    # that.
+    from pokerlab.drills import generator as gen
+    budget = 4 * len({d.leak_key for d in gen.default_population()})
+    for _ in range(budget):
         spot = client.get("/api/drill/next").json()
         if spot["kind"] == "icm":
             assert spot["tournament"] is not None

@@ -23,7 +23,7 @@ import numpy as np
 from pokerlab.charts import hands, jamfold_range
 from pokerlab.charts.equity import load_equity_matrix
 from pokerlab.charts.jamfold import icm_model, joint_prior, solve_jamfold_icm
-from pokerlab.drills.categories import jamfold_category
+from pokerlab.drills.categories import ANTES, jamfold_category
 from pokerlab.types import Solution, TournamentContext
 
 DEPTHS: tuple[int, ...] = (5, 8, 10, 15, 20)
@@ -59,12 +59,17 @@ class Drill:
 
 
 def _describe(pos: str, depth: float, hand: str, kind: str,
-              tc: TournamentContext | None) -> str:
+              tc: TournamentContext | None, ante_bb: float = 0.0) -> str:
     d = int(depth)
+    # The ante is part of the QUESTION, not decoration: the three ante variants
+    # of one spot have genuinely different answer keys (15 chart flips at
+    # 0.125bb/player, 25 at 0.25 — round-3 finding [E49]), so a prompt that
+    # omitted it would ask the user to guess which chart is being tested.
+    ante = f", {ante_bb:g}bb ante" if ante_bb else ""
     if pos == "SB":
-        base = f"SB {d}bb, {hand}: open-jam or fold?"
+        base = f"SB {d}bb{ante}, {hand}: open-jam or fold?"
     else:
-        base = f"BB {d}bb facing an SB all-in, {hand}: call or fold?"
+        base = f"BB {d}bb{ante} facing an SB all-in, {hand}: call or fold?"
     if kind == "icm" and tc is not None:
         base = (f"[Bubble ICM · {tc.players_remaining} left, "
                 f"{len(tc.payouts)} paid] " + base)
@@ -72,20 +77,29 @@ def _describe(pos: str, depth: float, hand: str, kind: str,
 
 
 def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
-    """Chip-EV push/fold drills over depths × {SB, BB} × 169 hand classes."""
+    """Chip-EV push/fold drills over depths × antes × {SB, BB} × 169 classes.
+
+    Every ante bucket gets its own drills (round-3 finding [E49]): the grader
+    keys a real hand's category at its snapped ante, so a category the
+    generator never emits is a leak the training loop can detect but not
+    train. The ante is solved at the SAME bucket the key names — both sides go
+    through `categories.snap_ante`.
+    """
     out: list[Drill] = []
     for pos in ("SB", "BB"):
         for d in depths:
-            rng = jamfold_range(pos, float(d))
-            leak_key = jamfold_category(pos, float(d))
-            pot = 2.0 * float(d)
-            for hand in hands.HAND_CLASSES:
-                out.append(Drill(
-                    drill_id=f"{leak_key}:{hand}", kind="jamfold", position=pos,
-                    depth_bb=float(d), hand_label=hand, solution=rng[hand],
-                    pot_bb=pot, leak_key=leak_key, legal_actions=_ACTIONS[pos],
-                    description=_describe(pos, d, hand, "jamfold", None),
-                ))
+            for ante in ANTES:
+                rng = jamfold_range(pos, float(d), ante)
+                leak_key = jamfold_category(pos, float(d), ante_bb=ante)
+                pot = 2.0 * float(d)
+                for hand in hands.HAND_CLASSES:
+                    out.append(Drill(
+                        drill_id=f"{leak_key}:{hand}", kind="jamfold",
+                        position=pos, depth_bb=float(d), hand_label=hand,
+                        solution=rng[hand], pot_bb=pot, leak_key=leak_key,
+                        legal_actions=_ACTIONS[pos],
+                        description=_describe(pos, d, hand, "jamfold", None, ante),
+                    ))
     return out
 
 
@@ -139,14 +153,18 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
     sb_sol, bb_sol, depth = _icm_solutions(tournament, sb_seat, bb_seat)
     pot = 2.0 * depth
     out: list[Drill] = []
+    # ICM antes are NOT expanded into variants: unlike the chip-EV charts, the
+    # ante here is a property of the fixture tournament, not a free axis, so
+    # the key names the ante that context actually has (round-3 finding [E49]).
+    icm_ante = float(tournament.ante) / float(tournament.bb) if tournament.bb else 0.0
     for pos, sols in (("SB", sb_sol), ("BB", bb_sol)):
-        leak_key = jamfold_category(pos, depth, icm=True)
+        leak_key = jamfold_category(pos, depth, icm=True, ante_bb=icm_ante)
         for hand in hands.HAND_CLASSES:
             out.append(Drill(
                 drill_id=f"{leak_key}:{hand}", kind="icm", position=pos,
                 depth_bb=depth, hand_label=hand, solution=sols[hand],
                 pot_bb=pot, leak_key=leak_key, legal_actions=_ACTIONS[pos],
-                description=_describe(pos, depth, hand, "icm", tournament),
+                description=_describe(pos, depth, hand, "icm", tournament, icm_ante),
                 tournament=tournament,
             ))
     return out

@@ -19,7 +19,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pokerlab.charts.jamfold import jamfold_range
-from pokerlab.drills.categories import jamfold_category, postflop_category, snap_depth
+from pokerlab.drills.categories import (
+    jamfold_category,
+    postflop_category,
+    snap_ante,
+    snap_depth,
+)
 from pokerlab.drills.scoring import score
 from pokerlab.hh.decisions import Decision, hand_label
 from pokerlab.hh.population import Population
@@ -94,12 +99,17 @@ def grade_tier1(d: Decision) -> Grading:
     # it prescribe the opposite action. The bucket is the syllabus unit; the
     # drill generator already solves at it (drills/generator.py:jamfold_drills).
     depth_bb = float(snap_depth(d.eff_bb))
-    leak_key = jamfold_category(pos, depth_bb)  # depth-bucketed spot category
+    # Same snap-ONCE discipline on the ante axis (round-3 finding [E49]): the
+    # key carried no ante at all while the answer key below was solved at the
+    # hand's RAW ante, so grader and drill disagreed for essentially every real
+    # MTT hand. Both now key off this one snapped value.
+    ante_bb = snap_ante(d.ante_bb)
+    leak_key = jamfold_category(pos, depth_bb, ante_bb=ante_bb)
     ca = _chart_action(d, pos)
     if ca is None:
         return Grading(d.index, TIER_CHART, d.action_type, None, None, None,
                        leak_key, graded=False, note="off-chart action")
-    sol = jamfold_range(pos, depth_bb, d.ante_bb)[hand_label(d.hole)]
+    sol = jamfold_range(pos, depth_bb, ante_bb)[hand_label(d.hole)]
     sc = score(sol, ca, d.pot_bb)
     return Grading(d.index, TIER_CHART, ca, sc.best_action, sc.ev_loss_bb,
                    sc.correct, leak_key, graded=True,

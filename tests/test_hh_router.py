@@ -59,7 +59,13 @@ def test_jam_decision_is_preflop_tier1_allin() -> None:
     assert round(d.eff_bb) == 15
     assert d.formation == "2max:SB"
     # the persisted (canonical) leak_key is assigned by the grader:
-    from pokerlab.drills.categories import jamfold_category
+    from pokerlab.drills.categories import jamfold_category, snap_ante
     from pokerlab.hh.grade import grade_tier1
-    assert grade_tier1(d).leak_key == jamfold_category("SB", d.eff_bb)
-    assert grade_tier1(d).leak_key == "SBjam|preflop|jam|15"
+    # This fixture posts a real 0.125bb/player ante, so it is itself an
+    # instance of round-3 finding [E49]: the key used to omit the ante while
+    # the answer key was solved WITH it. The category must name the ante
+    # bucket the chart was actually solved at.
+    assert d.ante_bb == 0.125
+    assert grade_tier1(d).leak_key == jamfold_category(
+        "SB", d.eff_bb, ante_bb=snap_ante(d.ante_bb))
+    assert grade_tier1(d).leak_key == "SBjam|preflop|jam|15a0.125"

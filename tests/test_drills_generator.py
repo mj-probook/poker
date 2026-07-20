@@ -14,10 +14,15 @@ from pokerlab.drills.scoring import score
 
 
 def test_jamfold_population_covers_syllabus():
+    from pokerlab.drills.categories import ANTES
+
     drills = gen.jamfold_drills()
-    assert len(drills) == 169 * 2 * len(gen.DEPTHS)
-    # one category per (position, depth)
-    assert len({d.leak_key for d in drills}) == 2 * len(gen.DEPTHS)
+    # The syllabus is depth × ANTE (round-3 finding [E49]): a category the
+    # grader can key but the generator never emits is a leak the loop can
+    # detect and not train, so every ante bucket carries a full 169-class set.
+    assert len(drills) == 169 * 2 * len(gen.DEPTHS) * len(ANTES)
+    # one category per (position, depth, ante bucket)
+    assert len({d.leak_key for d in drills}) == 2 * len(gen.DEPTHS) * len(ANTES)
     sb = [d for d in drills if d.position == "SB"]
     assert all(d.legal_actions == ("jam", "fold") for d in sb)
     assert all(d.pot_bb == 2.0 * d.depth_bb for d in drills)

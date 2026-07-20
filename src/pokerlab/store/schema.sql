@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS gradings(
   -- Canonical 4-part category key owned by drills/categories.py:
   --   formation|street|action|depth
   -- depth is a snapped bucket (5/8/10/15/20) for preflop jam/fold and '-' for
-  -- postflop; formation takes a '.icm' suffix for ICM variants.
+  -- postflop; formation takes a '.icm' suffix for ICM variants. The depth field
+  -- also carries a snapped per-player ante bucket when the ante is nonzero
+  -- ('10a0.125', '10a0.25' — buckets {0, 0.125, 0.25} bb/player, wave-3 [E49]);
+  -- a zero ante appends nothing, so ante-free keys are unchanged by that rev
+  -- and existing rows still join.
   leak_key TEXT NOT NULL,
   graded_at TEXT NOT NULL,
   -- The frequency the reference assigns the hero's action, and the deviation
