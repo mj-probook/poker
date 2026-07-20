@@ -60,6 +60,10 @@ class Hand:
         self.full_board = list(setup.board)
 
         self.contrib = [0] * n
+        # Dead money posted for the TABLE (a big-blind ante), per seat. Distinct
+        # from a per-player `ante`, which is that seat's own stake: this is not
+        # the poster's stake at all, so it never ladders with them (wave-3 [A1]).
+        self.table_dead = [0] * n
         self.street_bet = [0] * n
         self.stack_left = list(setup.stacks)
         self.folded = [False] * n
@@ -102,10 +106,17 @@ class Hand:
         if self.stack_left[seat] == 0:
             self.allin[seat] = True
 
-    def _post_ante(self, seat: int, amount: int) -> None:
-        """Charge a dead-money ante: contribution only, never a live bet."""
+    def _post_ante(self, seat: int, amount: int, *, for_table: bool = False) -> None:
+        """Charge a dead-money ante: contribution only, never a live bet.
+
+        ``for_table`` marks a big-blind ante — one seat posting on behalf of
+        everyone — which is accounted separately because it is not that seat's
+        stake (wave-3 [A1]).
+        """
         amt = min(amount, self.stack_left[seat])
         self.contrib[seat] += amt
+        if for_table:
+            self.table_dead[seat] += amt
         self.stack_left[seat] -= amt
         if self.stack_left[seat] == 0:
             self.allin[seat] = True
@@ -117,7 +128,7 @@ class Hand:
         if self.bb_ante:
             # one ante for the table, paid by the big blind, posted before the
             # blinds (it is dead money, not part of the BB's live blind)
-            self._post_ante(self._bb_seat(), self.bb_ante)
+            self._post_ante(self._bb_seat(), self.bb_ante, for_table=True)
         self._commit(self._sb_seat(), self.sb)
         self._commit(self._bb_seat(), self.bb)
 
@@ -366,12 +377,19 @@ class Hand:
           chip).
         * Otherwise (a player still has chips at showdown) PokerKit auto-mucks
           losing hands, so eligibility is the *survivors* — players who hold the
-          best hand among everyone who committed at least as much as they did.
+          best hand among everyone who staked at least as much as they did
+          (staked, not contributed — a table ante is not a stake).
           Losing all-ins drop out, merging their layers.
         """
         n = self.n
         winnings = [0] * n
         contrib = self.contrib
+        # A table ante is not the poster's stake (see below), so it must not
+        # count toward what they "committed" when deciding who is auto-mucked:
+        # a BB whose live bet is 42 but whose ante makes its contribution 142
+        # would otherwise out-rank, and knock out, a player who genuinely staked
+        # 92 of their own chips.
+        stakes = [contrib[i] - self.table_dead[i] for i in range(n)]
         nonfolded = [i for i in range(n) if not self.folded[i]]
 
         if len(nonfolded) <= 1:  # uncontested: sole player reclaims every layer
@@ -386,23 +404,61 @@ class Hand:
                 keep = {
                     i
                     for i in nonfolded
-                    if ranks[i] == min(ranks[j] for j in nonfolded if contrib[j] >= contrib[i])
+                    if ranks[i] == min(ranks[j] for j in nonfolded if stakes[j] >= stakes[i])
                 }
 
-        levels = sorted({c for c in contrib if c > 0})
+        # A big-blind ante is posted by ONE seat for the whole table, so it is
+        # not that seat's stake: it is main-pot money everyone still live
+        # contests. Laddering it with the poster's own contribution puts it in a
+        # top layer only they are eligible for, i.e. hands it straight back as
+        # though it were a bet nobody called — a BB who posted the ante, went
+        # all-in and LOST still collected its ante (wave-3 [A1]).
+        #
+        # So it comes out of the ladder and goes into the bottom pot. Note this
+        # is NOT the same as a per-player `ante`, which stays in `contrib` and
+        # ladders normally: that one IS the player's own stake, so a player who
+        # could only cover part of it staked only the bottom layer and must not
+        # contest the rest. Verified against PokerKit both ways.
+        #
+        # Reduces EXACTLY to the previous single ladder when no table ante was
+        # posted (`stakes == contrib`, nothing added), so every hand on the two
+        # pre-existing axes is bit-identical.
+        levels = sorted({c for c in stakes if c > 0})
         prev = 0
         pots: list[list] = []  # [amount, eligible_player_indices]
         for level in levels:
-            amount = (level - prev) * sum(1 for i in range(n) if contrib[i] >= level)
+            holders = tuple(i for i in range(n) if stakes[i] >= level)
+            amount = (level - prev) * len(holders)
             prev = level
-            pidx = tuple(i for i in range(n) if contrib[i] >= level and i in keep)
+            if len(holders) == 1:
+                # An UNCALLED BET: nobody else staked this layer, so there was
+                # nothing to win and nothing to lose. It goes back to the player
+                # who put it up whatever their hand — they are not winning it,
+                # they are being handed back money no opponent could match. This
+                # deliberately bypasses `keep`: an auto-mucked player still gets
+                # their own unmatched chips back.
+                pidx = holders
+            else:
+                pidx = tuple(i for i in holders if i in keep)
             while pots and pots[-1][1] == pidx:  # merge same-eligibility layers
                 amount += pots.pop()[0]
             pots.append([amount, pidx])
 
+        table_dead = sum(self.table_dead)
+        if table_dead:
+            # Its own pot at the bottom, contested by everyone still standing.
+            # It must NOT merge into a refund layer above it: that would hand
+            # dead money to a player as though it were their own uncalled bet,
+            # which is the [A1] defect in a different disguise.
+            pots.insert(0, [table_dead, tuple(sorted(keep))])
+
         for amount, pidx in pots:
-            if not pidx:  # only folded/killed players staked this layer
-                continue
+            if not pidx:
+                # Every staker of this layer was folded or auto-mucked. Skipping
+                # it would DESTROY chips, so it falls to the best hand standing.
+                pidx = tuple(sorted(keep))
+                if not pidx:
+                    continue
             if len(pidx) == 1:
                 winnings[pidx[0]] += amount  # incl. returned uncalled bet
                 continue

@@ -7,7 +7,7 @@ is the exhaustive oracle.
 import pytest
 
 from pokerlab.engine.cards import card_from_str as C
-from pokerlab.engine.state import new_hand
+from pokerlab.engine.state import Hand, HandSetup, new_hand
 
 
 def _hole(*pairs):
@@ -175,3 +175,70 @@ def test_multiway_preflop_closes_when_only_one_can_act_and_owes_nothing() -> Non
     # every short stack is all-in from its blind/ante; nobody can be bet against
     if sum(not h.allin[i] for i in range(4)) <= 1:
         assert h.to_act is None or h.current_bet - h.street_bet[h.to_act] > 0
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 [A1] (P0): a big-blind ante is posted by ONE seat for the TABLE, so it
+# is not that seat's stake. The pot ladder cut on total contribution, which put
+# the ante in a top layer only the poster was eligible for — i.e. handed it back
+# as an uncalled bet. A BB that posted the ante, went all-in and LOST still
+# collected its own ante.
+# --------------------------------------------------------------------------- #
+def _ante_showdown(bb_ante: int, stacks=(150, 250, 150)):
+    """3-handed all-in; seat1 is BB, posts the ante, and holds the WORST hand."""
+    def rc(r, s): return (r - 2) * 4 + s
+    hole = ((rc(14, 3), rc(14, 2)), (rc(7, 0), rc(3, 1)), (rc(13, 3), rc(13, 2)))
+    board = (rc(12, 0), rc(9, 1), rc(5, 2), rc(2, 3), rc(8, 0))  # helps nobody
+    setup = HandSetup(stacks=stacks, button=2, bb=100, sb=50, ante=0,
+                      hole=hole, board=board, bb_ante=bb_ante)
+    h = Hand(setup)
+    while not h.is_terminal():
+        acts = h.legal_actions()
+        h.apply(next((a for a in acts if a[0] == "allin"), None)
+                or next((a for a in acts if a[0] == "call"), acts[0]))
+    return h
+
+
+def test_a_losing_big_blind_does_not_get_its_ante_back():
+    h = _ante_showdown(bb_ante=100)
+    # 550 chips are in play; every live commitment is 150, so NOTHING is
+    # uncalled. seat1's 100 ante is dead money and it holds the worst hand.
+    assert sum(h.contrib) == 550
+    assert h.final_stacks() == [550, 0, 0]
+
+
+def test_a_table_ante_is_not_the_posters_stake():
+    h = _ante_showdown(bb_ante=100)
+    # The ante rides in `contrib` (it is real money in the pot) but is excluded
+    # from the poster's stake, which is what the ladder and the auto-muck test
+    # are computed on.
+    assert h.contrib[1] == 250
+    assert h.table_dead == [0, 100, 0]
+
+
+def test_chips_are_conserved_with_a_table_ante():
+    for bb_ante, stacks in [(100, (150, 250, 150)), (200, (70, 500, 300)),
+                            (500, (90, 120, 3000))]:
+        h = _ante_showdown(bb_ante=bb_ante, stacks=stacks)
+        assert sum(h.final_stacks()) == sum(stacks), (
+            f"bb_ante={bb_ante} stacks={stacks}: pot does not add up")
+
+
+def test_an_uncalled_bet_still_comes_back_with_a_table_ante_in_play():
+    """The fix must not overshoot: genuinely unmatched LIVE chips still return.
+
+    Everyone folds to a BB that posted the ante, so the BB's own blind is
+    uncalled — it comes back — and the BB also collects the dead ante and the
+    blinds, because it is the only player left.
+    """
+    def rc(r, s): return (r - 2) * 4 + s
+    hole = ((rc(14, 3), rc(14, 2)), (rc(7, 0), rc(3, 1)), (rc(13, 3), rc(13, 2)))
+    board = (rc(12, 0), rc(9, 1), rc(5, 2), rc(2, 3), rc(8, 0))
+    setup = HandSetup(stacks=(1000, 1000, 1000), button=2, bb=100, sb=50,
+                      ante=0, hole=hole, board=board, bb_ante=100)
+    h = Hand(setup)
+    while not h.is_terminal():
+        acts = h.legal_actions()
+        h.apply(next((a for a in acts if a[0] == "fold"), acts[0]))
+    assert sum(h.final_stacks()) == 3000
+    assert h.final_stacks()[1] == 1050          # BB wins the SB, ante is its own

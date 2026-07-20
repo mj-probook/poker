@@ -88,6 +88,37 @@ def short_stack_setup(seed: int) -> HandSetup:
                      ante=ante, hole=hole, board=board)
 
 
+def bb_ante_setup(seed: int) -> HandSetup:
+    """A seeded random hand with a BIG-BLIND ANTE — one player posts for the table.
+
+    The third permanent differential axis (wave-3 [A2]), added for the same
+    reason as `short_stack_setup`: the existing generators emit only uniform
+    antes (`ante`, every seat pays) or none, so no hand they can produce has a
+    single-payer dead-money contribution. That is precisely the shape [A1] lived
+    in — the engine returned a lone ante to a losing BB as though it were an
+    uncalled bet — and both existing axes were green through all of it.
+
+    BB ante is the standard modern MTT structure, so this is the common case,
+    not an exotic one.
+    """
+    rng = random.Random(seed ^ 0xBBA07E)
+    n = rng.randint(2, 6)
+    bb_ante = rng.choice([BB, BB, BB // 2, 2 * BB])
+    stacks = []
+    for _ in range(n):
+        if rng.random() < 0.35:        # short enough to be all-in from the ante
+            stacks.append(rng.randint(5, 3 * BB))
+        else:
+            stacks.append(rng.randint(3 * BB, 60 * BB))
+    button = 1 if n == 2 else n - 1
+    deck = Deck((seed * 2654435761) & 0xFFFFFFFF)
+    cards = deck.deal(2 * n + 5)
+    hole = tuple((cards[2 * i], cards[2 * i + 1]) for i in range(n))
+    board = tuple(cards[2 * n : 2 * n + 5])
+    return HandSetup(stacks=tuple(stacks), button=button, bb=BB, sb=SB,
+                     ante=0, hole=hole, board=board, bb_ante=bb_ante)
+
+
 def random_action(hand: Hand, rng: random.Random) -> Action:
     """Pick a random *legal* action, biased toward reaching showdowns while
     still frequently raising/jamming for side-pot coverage."""
@@ -129,7 +160,7 @@ def pokerkit_final_stacks(setup: HandSetup, action_history: list[tuple[int, Acti
     n = len(setup.stacks)
     blinds = (setup.sb, setup.bb) + (0,) * (n - 2)
     s = NoLimitTexasHoldem.create_state(
-        _AUTOMATIONS, True, setup.ante, blinds, setup.bb,
+        _AUTOMATIONS, not setup.bb_ante, _pk_antes(setup), blinds, setup.bb,
         tuple(setup.stacks), n, mode=Mode.TOURNAMENT,
     )
     for i in range(n):
@@ -207,6 +238,60 @@ def _drain_forced_checks(s, drain_board) -> None:
         drain_board()
 
 
+def _pk_antes(setup: HandSetup) -> tuple[int, ...]:
+    """Our ante model -> PokerKit's per-seat ante vector.
+
+    THE ORACLE QUESTION, settled empirically before [A1] was touched.
+
+    `ante_trimming_status` selects between two real rules variants, and neither
+    one is right for both ante structures -- so the harness picks per hand.
+
+    It does NOT change ante COLLECTION for a uniform ante (measured: identical
+    contributions and pot under either flag, short payers included). What it
+    changes is who contests the dead money at award time:
+
+      * True  -- the ante pool is laddered. A player who could only cover part
+                 of the ante staked only the bottom layer and does not contest
+                 the rest.
+      * False -- the whole ante pool is contested by everyone, including a
+                 player who is all-in FROM the ante for less than it.
+
+    Our engine ladders (see `_pots` and wave-3 [A1]), so True is the faithful
+    oracle for uniform antes. Confirmed by hand, not just by green tests: for
+    `short_stack_setup(16)` -- stacks (3615, 6, 173, 2148), ante 25, seat1
+    all-in for 6 holding the BEST hand -- the laddered award gives seat1 only
+    the 4x6=24 main pot, which is what our engine and PokerKit-True both
+    produce; PokerKit-False hands seat1 an extra 57 by letting it contest an
+    ante layer it never paid into.
+
+    But True cannot be used with a SINGLE-PAYER ante, because trimming toward
+    the smallest ante owed (zero, since nobody else owes one) trims the lone
+    ante away entirely: PokerKit never collects it at all (measured: pot 150 vs
+    250 on the same hand) and models a game with no ante. So bb-ante hands pass
+    False, where the trimming rule has no lone ante to destroy.
+
+    The two settings agree wherever both are defined, which is why this split is
+    a faithful oracle rather than a convenient one: a single payer produces
+    exactly one dead level, so there is no ante ladder for False to get wrong.
+
+    THE HEADS-UP ROTATION TRAP. PokerKit's raw ante vector is rotated relative
+    to seat index when n == 2: `antes=(100, 0)` charges seat 1, and
+    `antes=(0, 100)` charges seat 0. (Its blinds rotate the same way -- HU the
+    button posts the small blind -- which is why our seat convention already
+    puts seat1=SB/button.) Getting this backwards silently charges the WRONG
+    player and the differential then measures the wrong game, so n=2 is handled
+    explicitly here rather than excluded: HU with a BB ante is a real final-table
+    structure, and excluding it would rebuild exactly the kind of generator blind
+    spot [E1] and [A2] were both caused by.
+    """
+    antes = [setup.ante] * len(setup.stacks)
+    if setup.bb_ante:
+        bb_seat = 0 if len(setup.stacks) == 2 else (setup.button + 2) % len(setup.stacks)
+        idx = (bb_seat + 1) % 2 if len(setup.stacks) == 2 else bb_seat
+        antes[idx] += setup.bb_ante
+    return tuple(antes)
+
+
 def _is_odd_chip_only(hand: Hand, mine: list[int], theirs: list[int]) -> bool:
     """True iff the only difference is odd-chip *placement* among tied winners.
 
@@ -250,6 +335,16 @@ def check_hand(seed: int, action_fn=random_action,
     setup = setup_fn(seed)
     hand = play_engine(setup, seed, action_fn)
     mine = hand.final_stacks()
+    # Chips are conserved or the engine is wrong in a way no oracle comparison
+    # should have to discover for us. Checked here so a pot-formation bug is
+    # named as such instead of surfacing as a confusing stack diff (wave-3 [A1]
+    # shipped two ladder rewrites; one of them silently destroyed chips).
+    if sum(mine) != sum(setup.stacks):
+        return "mismatch", (
+            f"seed={seed} CHIPS NOT CONSERVED: start={sum(setup.stacks)} "
+            f"end={sum(mine)}\n  stacks0={setup.stacks} final={mine}\n"
+            f"  contrib={hand.contrib} table_dead={hand.table_dead}"
+        )
     theirs = pokerkit_final_stacks(setup, hand.action_history)
     if mine == theirs:
         return "exact", ""
