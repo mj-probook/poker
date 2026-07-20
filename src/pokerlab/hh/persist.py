@@ -197,8 +197,11 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
       * **error** (anything else raises) -> 'failed', and only that row; a bug
         must never cost the rest of the backlog (round-1 finding [10]).
 
-    'failed' is not a black hole: `db.retry_failed_batch` reopens those rows
-    deliberately once the cause is fixed.
+    None of the terminal states is a black hole: `db.retry_failed_batch` reopens
+    them deliberately once the cause is fixed. It defaults to 'failed' because
+    retry is the remedy only for that one — 'unsolvable' needs a solver upgrade
+    and 'mismatched' needs a re-import, and reopening either before that just
+    re-fails the row.
 
     Rows stranded at 'running' by an earlier crashed drain are recovered to
     'pending' first, so the backlog cannot silently leak work.

@@ -166,15 +166,42 @@ def test_a_refused_spot_closes_the_row_as_unsolvable_not_failed():
                 if r["status"] == "pending"], "a structural refusal must not stay queued"
 
 
-def test_every_terminal_status_is_reopenable():
-    """All three terminal causes stay escape-hatched via retry_failed_batch."""
-    conn = db.connect()
+def _queued_with(conn, statuses):
     hid = db.insert_imported_hand(conn, "PokerStars", "r", "{}", AT, "uid-x")
-    for i, st in enumerate(("failed", "unsolvable", "mismatched")):
+    for i, st in enumerate(statuses):
         rid = db.enqueue_batch(conn, "k|flop", hid, i)
         db.set_batch_status(conn, rid, st)
-    assert db.retry_failed_batch(conn) == 3
-    assert {r["status"] for r in db.batch_rows(conn)} == {"pending"}
+
+
+def test_retry_reopens_only_bug_failures_by_default():
+    """Retry is the remedy for 'failed' ALONE.
+
+    A 'mismatched' row re-derives the same wrong spot and re-fails forever, and
+    an 'unsolvable' row needs a solver upgrade first — reopening them by default
+    would collapse the three remedies back into one, which is the conflation the
+    separate statuses exist to prevent.
+    """
+    conn = db.connect()
+    _queued_with(conn, ("failed", "unsolvable", "mismatched"))
+
+    assert db.retry_failed_batch(conn) == 1
+    assert {r["status"] for r in db.batch_rows(conn)} == {
+        "pending", "unsolvable", "mismatched"}
+
+
+def test_the_other_terminal_causes_are_reopenable_explicitly():
+    """Still escape hatches, once their real remedy has been applied."""
+    conn = db.connect()
+    _queued_with(conn, ("failed", "unsolvable", "mismatched"))
+
+    assert db.retry_failed_batch(conn, ("unsolvable", "mismatched")) == 2
+    assert {r["status"] for r in db.batch_rows(conn)} == {"pending", "failed"}
+
+
+def test_retry_rejects_a_non_terminal_status():
+    conn = db.connect()
+    with pytest.raises(ValueError, match="not terminal statuses"):
+        db.retry_failed_batch(conn, ("done",))
 
 
 # --------------------------------------------------------------------------- #

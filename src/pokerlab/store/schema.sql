@@ -113,7 +113,10 @@ CREATE TABLE IF NOT EXISTS batch_queue(
   --   'mismatched'  the queue no longer describes the hand (the re-derived
   --                 decision is not the one queued, see hh/persist [B2]).
   -- Collapsing these to 'failed' made the report call a transient cause
-  -- permanent. All three are reopenable via retry_failed_batch.
+  -- permanent. All three are reopenable via retry_failed_batch, but it reopens
+  -- 'failed' by default: retry is the remedy only for that one. Reopening a
+  -- 'mismatched' row without re-importing re-derives the same wrong spot and
+  -- re-fails forever.
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'running', 'done', 'failed', 'unsolvable', 'mismatched'))
 );

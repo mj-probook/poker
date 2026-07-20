@@ -289,19 +289,40 @@ def recover_running_batch(conn: sqlite3.Connection) -> int:
     return int(cur.rowcount)
 
 
-def retry_failed_batch(conn: sqlite3.Connection) -> int:
-    """Reopen terminally-failed rows for another drain; return the count.
+TERMINAL_STATUSES = ("failed", "unsolvable", "mismatched")
 
-    Reopens every TERMINAL cause — 'failed', 'unsolvable' and 'mismatched'.
-    They are separate statuses because they need separate operator guidance
-    (only 'failed' clears by fixing a bug), but all three are deliberate escape
-    hatches rather than black holes: a gate that widens later should be able to
-    pick up the spots it used to refuse. Never called automatically (wave-2
-    [E15]).
+
+def retry_failed_batch(conn: sqlite3.Connection,
+                       statuses: tuple[str, ...] = ("failed",)) -> int:
+    """Reopen terminal rows of the given kinds for another drain; return count.
+
+    Defaults to 'failed' — the ONLY class where retrying is itself the remedy.
+    The three terminal causes exist as separate states precisely because they
+    need different actions, and reopening them together would collapse that
+    distinction again one layer up:
+
+      * 'failed'      a bug failed the row -> fix the bug, then retry. Retrying
+                      is the remedy, so this is the default.
+      * 'unsolvable'  structurally outside what the solver models -> retry only
+                      after a SOLVER UPGRADE widens the gate; before that it
+                      re-fails by construction.
+      * 'mismatched'  the queue row no longer describes the hand -> the remedy
+                      is RE-IMPORT. A retry alone re-derives the same wrong spot
+                      and re-fails forever, so blanket-reopening this class sends
+                      the operator round a loop (w3-product-builder's evidence).
+
+    Pass ``statuses`` explicitly to reopen the others once their real remedy has
+    been applied. Never called automatically (wave-2 [E15]).
     """
+    bad = set(statuses) - set(TERMINAL_STATUSES)
+    if bad:
+        raise ValueError(
+            f"not terminal statuses: {sorted(bad)} "
+            f"(expected a subset of {list(TERMINAL_STATUSES)})")
+    marks = ",".join("?" * len(statuses))
     cur = conn.execute(
-        "UPDATE batch_queue SET status='pending'"
-        " WHERE status IN ('failed', 'unsolvable', 'mismatched')")
+        f"UPDATE batch_queue SET status='pending' WHERE status IN ({marks})",
+        tuple(statuses))
     conn.commit()
     return int(cur.rowcount)
 
