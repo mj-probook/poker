@@ -159,8 +159,11 @@ def test_one_bad_hand_does_not_cost_the_good_ones():
     parsed, raws, problems, lost = _read_hands([str(FIXTURES / "ps_session_mixed.txt")])
     assert len(parsed) == 2, "the two valid hands must survive the broken one"
     assert len(lost) == 1, "the broken hand must be recorded, not dropped"
-    site, raw, reason = lost[0]
+    # 4th field is the peeked hand uid ([R1b]); None here because this chunk's
+    # failure IS a header failure, so no number was ever readable.
+    site, raw, reason, uid = lost[0]
     assert site == "PokerStars"
+    assert uid is None
     assert "BROKEN" in raw, "the lost chunk's OWN text is stored for re-import"
     assert raw.count("PokerStars Hand #") == 1, "lost raw is one hand, not the file"
     # the message names which hand in the file, not just the filename

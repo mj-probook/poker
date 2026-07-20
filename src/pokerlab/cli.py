@@ -17,10 +17,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pokerlab.hh.ggpoker import parse_ggpoker, split_ggpoker
+from pokerlab.hh.ggpoker import parse_ggpoker, peek_ggpoker_uid, split_ggpoker
 from pokerlab.hh.model import ParsedHand
 from pokerlab.hh.persist import drain_batch_queue, persist_session
-from pokerlab.hh.pokerstars import parse_pokerstars, split_pokerstars
+from pokerlab.hh.pokerstars import (parse_pokerstars, peek_pokerstars_uid,
+                                    split_pokerstars)
 from pokerlab.hh.population import load_population
 from pokerlab.hh.report import grade_session
 from pokerlab.spike import tier2
@@ -48,11 +49,15 @@ _PARSERS = {"PokerStars": parse_pokerstars, "GGPoker": parse_ggpoker}
 # Keyed by the same site names `detect_site` returns, so routing and splitting
 # cannot disagree about what a file is (round-4 finding [R2']).
 _SPLITTERS = {"PokerStars": split_pokerstars, "GGPoker": split_ggpoker}
+# Same keys again: a chunk we could not parse still has to be NAMED, and the
+# name has to come from the same site's header pattern that parsing uses
+# (round-4 finding [R1b]).
+_PEEKERS = {"PokerStars": peek_pokerstars_uid, "GGPoker": peek_ggpoker_uid}
 
 
 def _read_hands(paths: list[str]
                 ) -> tuple[list[ParsedHand], list[str], list[str],
-                           list[tuple[str, str, str]]]:
+                           list[tuple[str, str, str, str | None]]]:
     """(parsed, raws, problems, lost) — an unreadable file never costs the others.
 
     `lost` is the subset of problems that are LOST HANDS: a real hand history,
@@ -61,6 +66,16 @@ def _read_hands(paths: list[str]
     them durably — printing alone left no trace by morning on a cron run, which
     is the very gap `failed_hands` exists to close, reappearing one layer up in
     the entry point.
+
+    Each `lost` entry carries a hand uid where one could be read. "Never
+    silently dropped" is only half-kept by a count: "1 hand could not be graded"
+    is a fact the operator can read and cannot act on, because the remedy is to
+    go find that hand in the session file and the hand number is how you do it.
+    A body-level failure parsed its header perfectly, so the number is known —
+    reporting it as unidentified while the number sat in the stored raw text was
+    a self-inflicted loss (round-4 finding [R1b]). The uid is None only when the
+    HEADER itself would not parse, and there it stays None: inventing a number
+    is worse than admitting we have none.
 
     The other two problems are deliberately NOT lost hands, because their
     remedies differ and collapsing remedies is its own defect:
@@ -72,7 +87,7 @@ def _read_hands(paths: list[str]
     parsed: list[ParsedHand] = []
     raws: list[str] = []
     problems: list[str] = []
-    lost: list[tuple[str, str, str]] = []      # (site, raw, reason)
+    lost: list[tuple[str, str, str, str | None]] = []   # (site, raw, reason, uid)
     for p in paths:
         name = Path(p).name
         try:
@@ -101,13 +116,17 @@ def _read_hands(paths: list[str]
                 raws.append(chunk)
             except Exception as exc:  # noqa: BLE001 - per-hand isolation boundary
                 reason = f"{type(exc).__name__}: {exc}"
+                # Ask the header for a name AFTER parsing failed, not before:
+                # the chunks that need naming are exactly the ones `parse_*`
+                # threw on, so the name cannot come from a ParsedHand.
+                uid = _PEEKERS[site](chunk)
                 problems.append(f"{where}: {reason}")
                 # A header-level failure now reaches `failed_hands` instead of
                 # dying on stdout (round-4 finding [P2]): it is a chunk of a
                 # recognized site's file, so `site` is known and the row is
                 # honest — no invented "unknown" site is needed, because a file
                 # we cannot attribute never gets here (see `detect_site` above).
-                lost.append((site, chunk, reason))
+                lost.append((site, chunk, reason, uid))
     return parsed, raws, problems, lost
 
 
@@ -129,8 +148,8 @@ def main_import(argv: list[str] | None = None) -> int:
     # Record lost hands BEFORE the empty-session exit. A cron run whose files
     # are all broken is exactly the case where the failure must survive, and
     # returning early here would have left the worst run with no trace at all.
-    for site, raw, reason in lost:
-        db.insert_failed_hand(conn, site, raw, reason, at)
+    for site, raw, reason, uid in lost:
+        db.insert_failed_hand(conn, site, raw, reason, at, uid)
 
     if not parsed:
         print(f"no hands to import ({len(lost)} recorded as failed)")
@@ -154,8 +173,12 @@ def main_import(argv: list[str] | None = None) -> int:
     print(f"failed     : {report.failed_hand_count + len(lost)} hands could "
           f"not be graded ({len(lost)} at parse, "
           f"{report.failed_hand_count} at grading)")
-    for site, _raw, reason in lost:
-        print(f"   - {site} (parse): {reason}")
+    # Named here too, not only in the web report: on the cron path this stdout
+    # IS the summary, and "a hand failed" without saying which one is the same
+    # unactionable line one surface over.
+    for site, _raw, reason, uid in lost:
+        which = f"hand #{uid}" if uid else "unidentified hand"
+        print(f"   - {site} {which} (parse): {reason}")
     for fh in report.failed_hands:
         print(f"   - hand #{fh.hand_index} ({fh.hand_id}): {fh.reason}")
     # A pending count is not a footnote: plan §5.3 marks a session PARTIAL until
