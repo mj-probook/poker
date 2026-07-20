@@ -1,7 +1,7 @@
 .PHONY: test soak bench lint
 
-test:            ## fast suite (<60s target)
-	uv run pytest
+test:            ## fast suite (<60s target; xdist — internal diff pools divide by worker count)
+	uv run pytest -n 4
 
 soak:            ## heavy differentials (1M-hand PokerKit differential etc.)
 	uv run pytest -m slow -q

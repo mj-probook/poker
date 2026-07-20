@@ -386,6 +386,18 @@ def scan_chunk(bounds: tuple[int, int], action_fn=random_action,
     return exact, odd, mismatches
 
 
+def _default_workers() -> int:
+    """Internal pool size: ``cpu_count - 2``, divided by the xdist worker count.
+
+    Under ``pytest -n N`` every xdist worker runs differential tests in its own
+    process, so each internal pool must take 1/N of the box or the workers
+    multiply into oversubscription (the recorded wave-2 wrinkle)."""
+    import os
+
+    xdist = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "1"))
+    return max(1, ((os.cpu_count() or 2) - 2) // max(1, xdist))
+
+
 def run_differential(
     n: int, start: int = 0, workers: int | None = None, chunk: int = 400,
     action_fn=random_action, setup_fn=random_setup,
@@ -397,9 +409,8 @@ def run_differential(
     env-encoding policy for the SingleEnvAdapter exit."""
     import concurrent.futures as cf
     import functools
-    import os
 
-    workers = workers or max(1, (os.cpu_count() or 2) - 2)
+    workers = workers or _default_workers()
     bounds = [(s, min(s + chunk, start + n)) for s in range(start, start + n, chunk)]
     exact = odd = 0
     mismatches: list[str] = []
