@@ -216,15 +216,31 @@ def split_hands(text: str, boundary: str) -> list[str]:
     Leading text before the first boundary (a client preamble, or junk) is
     returned as its own chunk rather than dropped: the caller isolates and
     records it, and discarding unparseable input is what plan §8 forbids.
+
+    BYTE-FAITHFUL: the chunks concatenate back to `text` exactly. This is a
+    contract, not an implementation detail, because `failed_hands` is keyed on
+    the stored raw text and a re-import must reproduce it to clear the row. A
+    first version joined `splitlines()` with "\\n", which silently normalized
+    CRLF and dropped the trailing newline — so no chunk was ever byte-identical
+    to its source file, and a failure recorded before this change could never
+    be cleared again. The report would then claim forever that a hand is broken
+    which now imports fine, which is the exact defect `clear_failed_hand`
+    exists to prevent.
     """
     if not text.strip():
         return []
-    lines = text.splitlines()
-    starts = [i for i, ln in enumerate(lines) if ln.startswith(boundary)]
+    # Character offsets, so slices preserve the original bytes verbatim —
+    # including line endings and the trailing newline.
+    offsets, pos = [], 0
+    for ln in text.splitlines(keepends=True):
+        offsets.append(pos)
+        pos += len(ln)
+    starts = [offsets[i] for i, ln in enumerate(text.splitlines())
+              if ln.startswith(boundary)]
     if not starts:
         return [text]
-    bounds = ([0] if starts[0] != 0 else []) + starts + [len(lines)]
-    chunks = ["\n".join(lines[a:b]) for a, b in zip(bounds, bounds[1:])]
+    bounds = ([0] if starts[0] != 0 else []) + starts + [len(text)]
+    chunks = [text[a:b] for a, b in zip(bounds, bounds[1:])]
     return [c for c in chunks if c.strip()]
 
 

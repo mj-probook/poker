@@ -206,3 +206,93 @@ def test_unrecognized_file_is_still_not_a_lost_hand():
         assert any("unrecognized" in p for p in problems)
     finally:
         junk.unlink()
+
+
+def test_main_import_actually_calls_the_splitter(tmp_path):
+    """The SEAM: `main_import` -> splitter. Owned by neither suite until now.
+
+    The splitter tests above call `split_pokerstars`/`parse_pokerstars_file`
+    directly; `test_cli_entry.py`'s fixtures are single-hand, for which
+    `[raw]` and `split(raw)` are identical. So both suites stayed green with the
+    CLI wiring absent — imports, a `_SPLITTERS` table and a five-line comment
+    all asserting per-hand splitting while the enforcement line did nothing.
+
+    That is the wave's inertness pattern in the seam between two owners:
+    everything each side owns is tested, and the wire between them is not. This
+    routes a real multi-hand file through the actual entry point and asserts the
+    hand count, which is the only assertion the inert version fails.
+    """
+    import sqlite3
+
+    from pokerlab.cli import main_import
+
+    dbp = str(tmp_path / "seam.db")
+    main_import([str(FIXTURES / "ps_session_multi.txt"), "--db", dbp])
+    n = sqlite3.connect(dbp).execute(
+        "SELECT COUNT(*) FROM imported_hands").fetchone()[0]
+    assert n > 1, (
+        f"main_import stored {n} hand(s) from a 3-hand session file — "
+        "the CLI is not calling the splitter")
+    assert n == 3
+
+
+# --------------------------------------------------------------------------- #
+# Chunk byte-faithfulness. `failed_hands` is keyed on the stored raw text and
+# `clear_failed_hand` matches it exactly, so once `raw` became a CHUNK the
+# clear's correctness started depending on this splitter. The first version
+# joined `splitlines()` with "\n" — silently normalizing CRLF and dropping the
+# trailing newline — so no chunk was byte-identical to its source and every
+# failure recorded before the change became permanently unclearable, with the
+# report claiming forever that a fixed hand is broken.
+#
+# Making the chunker byte-faithful dissolves that seam rather than pinning a
+# boundary convention or re-keying the store: the property promised is
+# "concatenates back to the input", which is worth guaranteeing on its own
+# terms and lets the splitter change freely as long as it holds.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("name", ["ps_preflop_fold.txt", "ps_session_multi.txt",
+                                  "ps_session_mixed.txt"])
+def test_chunks_concatenate_back_to_the_source_exactly(name):
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    raw = _read(name)
+    assert "".join(split_pokerstars(raw)) == raw
+
+
+def test_windows_line_endings_survive_the_split():
+    """A PokerStars client on Windows writes CRLF; normalizing it loses the key."""
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    crlf = _read("ps_session_multi.txt").replace("\n", "\r\n")
+    assert "".join(split_pokerstars(crlf)) == crlf
+
+
+def test_a_failure_recorded_before_splitting_still_clears(tmp_path):
+    """The end-to-end consequence: fail a hand, fix it, re-import, count goes to 0.
+
+    Pinned end-to-end rather than as a string property because the property is
+    only interesting for what it protects. A row written under the pre-split
+    shape (raw = the whole single-hand file, exactly as R1 wrote it) must still
+    be cleared by a successful re-import; otherwise `failed_hands` answers "what
+    was ever broken" instead of "what is broken now".
+    """
+    import sqlite3
+
+    from pokerlab.cli import main_import
+    from pokerlab.store import db
+
+    dbp = str(tmp_path / "legacy.db")
+    raw = _read("ps_preflop_fold.txt")
+    conn = db.connect(dbp)
+    db.insert_failed_hand(conn, "PokerStars", raw, "ValueError: old parser bug",
+                          "2026-07-19T00:00:00")
+    conn.close()
+    assert sqlite3.connect(dbp).execute(
+        "SELECT COUNT(*) FROM failed_hands").fetchone()[0] == 1
+
+    main_import([str(FIXTURES / "ps_preflop_fold.txt"), "--db", dbp])
+    remaining = sqlite3.connect(dbp).execute(
+        "SELECT COUNT(*) FROM failed_hands").fetchone()[0]
+    assert remaining == 0, (
+        "a pre-split failure row survived a successful re-import — the report "
+        "will claim forever that this hand is broken")
