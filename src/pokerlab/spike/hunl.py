@@ -107,7 +107,7 @@ def _range_from_class_weights(w: np.ndarray, board: tuple[int, ...]) -> np.ndarr
 # and measured instead; `test_spike_hunl` pins that the doc's figures still match
 # what the code actually draws.
 GEN_KEEP_FRAC = 0.2
-EVAL_KEEP_FRAC = 0.12
+EVAL_KEEP_FRAC = 0.10
 
 
 def sample_range(rng: np.random.Generator, board: tuple[int, ...],
@@ -546,7 +546,7 @@ def run_spike(*, n_rows: int = 10_000, n_eval: int = 20, seed: int = 0,
     figure moves with whatever pot sizes the eval happened to draw.
 
     ``eval_keep_frac`` is SPARSER than the density the training data was
-    generated at (`EVAL_KEEP_FRAC` 0.12 vs `GEN_KEEP_FRAC` 0.2), so the net is
+    generated at (`EVAL_KEEP_FRAC` 0.10 vs `GEN_KEEP_FRAC` 0.2), so the net is
     evaluated partly off its own training support. That is wave-3 [M2]'s
     parameter half, left open ON PURPOSE: every recorded number in the spike
     note was produced at these values, and aligning them would leave the results

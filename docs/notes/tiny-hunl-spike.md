@@ -199,21 +199,27 @@ This has two halves, and both are open:
 
   | configuration | eval density | mean non-zero classes | vs generation (0.2 → 34.2) |
   |---|---|---|---|
-  | the run recorded above (explicit `eval_keep_frac=0.10`) | 0.10 | **17.1** | half as dense |
-  | `run_spike` shipped default (`EVAL_KEEP_FRAC`) | 0.12 | **20.6** | still sparser |
+  | the run recorded above, and now the shipped default | 0.10 | **17.1** | half as dense |
 
-  The numbers in the results table were produced by the FIRST row — the run
-  overrides the default, so quoting the default's gap alongside them would
-  describe a configuration that produced none of them. Both are stated to remove
-  that ambiguity; it is what made two independent measurements of "the" sparsity
-  gap disagree (17.1 vs 20.6) when neither was wrong.
+  These used to be two rows. The recorded run passed `eval_keep_frac=0.10`
+  explicitly while `EVAL_KEEP_FRAC` shipped 0.12 (**20.6** classes), so the note
+  and the code described different configurations and two independent
+  measurements of "the" sparsity gap disagreed (17.1 vs 20.6) with neither being
+  wrong. [R4-c] aligned the default DOWN to the density that produced every
+  number here, which removes the ambiguity at its source rather than annotating
+  it. Nothing was re-measured: the figures are the ones already recorded, now
+  describing the configuration that actually ships.
 
   One character would close either. It is deliberately left open: every number
   in this note, and both of [M1]'s seed measurements, were produced at these
-  densities, so aligning them would leave the results table describing a
-  configuration that no longer ships — the recorded-vs-landed failure in
-  reverse, and the more expensive mistake. `test_spike_hunl` pins BOTH figures
-  against the code so neither can move without this note moving too.
+  densities. Aligning EVAL to GEN would still leave the results table describing
+  a configuration that no longer ships — the recorded-vs-landed failure in
+  reverse, and the more expensive mistake — so that alignment stays refused and
+  `test_the_two_densities_are_not_silently_equalised` still guards it. Aligning
+  the DEFAULT to the recorded run is the opposite move: it makes the shipped
+  configuration match the numbers rather than making the numbers stale.
+  `test_spike_hunl` pins the figures against the code so neither can move
+  without this note moving too.
 * **The structural half, which no parameter closes.** Beliefs reaching the leaf
   are *strategy-weighted reaches* produced by CFR iterations; training beliefs
   are sampled independently. No value of any density parameter makes an

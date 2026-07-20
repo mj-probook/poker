@@ -332,7 +332,7 @@ def test_run_spike_tiny_produces_verdict():
 
 # --------------------------------------------------------------------------- #
 # Wave-3 [M2]: the net was evaluated on ranges drawn SPARSER than any it was
-# trained on (eval keep_frac 0.12 vs generation 0.2), so 28.5% of eval beliefs
+# trained on (eval keep_frac 0.10 vs generation 0.2), so eval beliefs
 # sat below the sparsest training belief. The net was then blamed for answers
 # to questions outside its own support.
 #
@@ -380,8 +380,10 @@ def test_the_documented_belief_sparsity_gap_matches_the_shipped_config():
     """
     gen = _mean_nonzero_classes(hunl.GEN_KEEP_FRAC)
     ev_default = _mean_nonzero_classes(hunl.EVAL_KEEP_FRAC)
-    # the results table's run OVERRIDES the default with eval_keep_frac=0.10,
-    # so the recorded numbers describe this density, not the shipped one
+    # The recorded run and the shipped default are now the SAME density: the
+    # note's run passed eval_keep_frac=0.10 explicitly while the default was
+    # 0.12, so the doc and the code described different configurations. [R4-c]
+    # aligned the default to the density the recorded numbers actually describe.
     ev_recorded = _mean_nonzero_classes(0.10)
 
     assert ev_default < gen and ev_recorded < gen, "eval must be the sparser draw"
@@ -389,8 +391,10 @@ def test_the_documented_belief_sparsity_gap_matches_the_shipped_config():
     assert gen == pytest.approx(34.2, abs=0.5), f"doc says gen 34.2, got {gen:.1f}"
     assert ev_recorded == pytest.approx(17.1, abs=0.5), (
         f"doc says recorded-run eval 17.1, got {ev_recorded:.1f}")
-    assert ev_default == pytest.approx(20.6, abs=0.5), (
-        f"doc says shipped-default eval 20.6, got {ev_default:.1f}")
+    assert ev_default == pytest.approx(17.1, abs=0.5), (
+        f"the default must now DRAW what the note records; got {ev_default:.1f}")
+    assert ev_default == pytest.approx(ev_recorded, abs=0.01), (
+        "recorded run and shipped default must be the same density after [R4-c]")
 
 
 def test_the_two_densities_are_not_silently_equalised():
