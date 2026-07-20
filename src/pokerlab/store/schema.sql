@@ -29,12 +29,26 @@ CREATE TABLE IF NOT EXISTS gradings(
   -- depth is a snapped bucket (5/8/10/15/20) for preflop jam/fold and '-' for
   -- postflop; formation takes a '.icm' suffix for ICM variants.
   leak_key TEXT NOT NULL,
-  graded_at TEXT NOT NULL
+  graded_at TEXT NOT NULL,
+  -- A decision is graded once. Two concurrent drains can both see a batch row
+  -- 'pending', both re-derive it and both grade it; without this the duplicate
+  -- lands silently and double-counts into every leak statistic downstream
+  -- (wave-3 [B3]). The drain relies on this to fail loudly instead.
+  UNIQUE(hand_id, decision_idx)
 );
 
 -- Grading honesty is load-bearing (plan §5.3): tier 3 must never carry ev_loss.
+-- Guarded on BOTH writes: an INSERT-only trigger holds the rule exactly until
+-- someone writes an UPDATE, which is how R2 [E23] came back as wave-3 [B4].
 CREATE TRIGGER IF NOT EXISTS gradings_tier3_no_evloss
 BEFORE INSERT ON gradings
+WHEN NEW.tier = 3 AND NEW.ev_loss IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'tier-3 gradings must not report ev_loss');
+END;
+
+CREATE TRIGGER IF NOT EXISTS gradings_tier3_no_evloss_update
+BEFORE UPDATE ON gradings
 WHEN NEW.tier = 3 AND NEW.ev_loss IS NOT NULL
 BEGIN
   SELECT RAISE(ABORT, 'tier-3 gradings must not report ev_loss');

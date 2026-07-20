@@ -5,6 +5,7 @@ Reuses Slice E's `store` (schema, insert_grading, tier-3 honesty trigger) and
 the (not-yet-landed) real solver behind the injected `Solver` seam.
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -404,3 +405,91 @@ def test_a_completed_row_is_never_redrained() -> None:
 
     assert again["done"] == 0 and again["recovered"] == 0
     assert len(db.gradings(conn)) == baseline
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 cluster 1 [B2][B3][B4]: the store lets corruption happen quietly.
+# Each test below reproduces one hole BEFORE the fix.
+# --------------------------------------------------------------------------- #
+def test_tier3_honesty_survives_an_update() -> None:
+    """[B4] The trigger is BEFORE INSERT only, so UPDATE smuggles ev_loss in.
+
+    Tier-3 rows must never carry ev_loss (plan §5.3) — that is the honesty
+    guarantee the whole multiway tier rests on. Guarding only the INSERT means
+    the rule holds exactly until someone writes an UPDATE. Re-surfaces R2 [E23].
+    """
+    conn = db.connect()
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", AT, "uid-b4")
+    db.insert_grading(conn, hid, 0, 3, "call", "", None, "BBcall|flop|call|-", AT)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE gradings SET ev_loss = 1.5 WHERE tier = 3")
+        conn.commit()
+
+    row = conn.execute("SELECT ev_loss FROM gradings WHERE tier=3").fetchone()
+    assert row["ev_loss"] is None, "a tier-3 row is carrying an ev_loss"
+
+
+def test_the_same_decision_cannot_be_graded_twice() -> None:
+    """[B3] Nothing stops two gradings for one (hand, decision).
+
+    Two concurrent drains both see a row 'pending', both re-derive, both grade.
+    Without a uniqueness constraint the second write silently duplicates the
+    decision, double-counting it into every leak statistic downstream.
+    """
+    conn = db.connect()
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", AT, "uid-b3")
+    db.insert_grading(conn, hid, 4, 2, "bet", "check", 0.5, "BBcall|river|bet|-", AT)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_grading(conn, hid, 4, 2, "bet", "check", 0.5,
+                          "BBcall|river|bet|-", AT)
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM gradings WHERE hand_id=? AND decision_idx=4",
+        (hid,)).fetchone()[0] == 1
+
+
+def test_a_grading_cannot_reference_a_missing_hand() -> None:
+    """[B2] `hand_id REFERENCES imported_hands(id)` is declared but not enforced.
+
+    SQLite ignores foreign keys unless PRAGMA foreign_keys is ON per connection,
+    so the declaration reads as a guarantee while enforcing nothing.
+    """
+    conn = db.connect()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_grading(conn, 99999, 0, 1, "jam", "jam", 0.0,
+                          "SBjam|preflop|jam|10", AT)
+
+
+def test_drain_refuses_a_decision_that_is_not_the_one_queued() -> None:
+    """[B2] The drain re-derives by index and trusts whatever comes back.
+
+    `extract_decisions(parsed)[decision_idx]` is re-run at drain time against a
+    hand parsed *then*, not the decision that was queued. If the parser changes
+    shape between enqueue and drain — a fix that adds or reorders a decision,
+    exactly what wave-2's [E6]/[E33] parser work did — index N is silently a
+    different spot. A preflop decision then gets solved and stored as tier-2.
+
+    The queue row already carries `formation|street`, so the drain can check
+    identity for free. A mismatch means the backlog no longer describes the
+    hand; grading it anyway would write a confidently wrong row.
+    """
+    conn, report, _ = _persisted_session()
+    row = db.pending_batch(conn)[0]
+    # simulate the parser having shifted under the queue: same row, wrong spot
+    conn.execute("UPDATE batch_queue SET spot_key='BTNopen|preflop' WHERE id=?",
+                 (row["id"],))
+    conn.commit()
+
+    def solver(spot_key: str, d):
+        raise AssertionError("solver must not be called for a mismatched row")
+
+    result = drain_batch_queue(conn, solver, graded_at=AT)
+
+    assert result["mismatched"] == 1
+    assert next(r for r in db.batch_rows(conn)
+                if r["id"] == row["id"])["status"] == "failed"
+    assert not [g for g in db.gradings(conn)
+                if g["hand_id"] == row["hand_id"]
+                and g["decision_idx"] == row["decision_idx"]]

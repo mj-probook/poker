@@ -50,17 +50,29 @@ def test_get_sr_state_missing_returns_none():
     assert db.get_sr_state(conn, "nope") is None
 
 
+def _hand(conn, uid="uid-1"):
+    """A real imported_hands row.
+
+    Gradings reference it for real now that `connect` enables foreign keys
+    (wave-3 [B2]); before that these tests passed hand_id=1 against an empty
+    table, which the declared REFERENCES silently allowed.
+    """
+    return db.insert_imported_hand(conn, "PokerStars", "raw", "{}", "t", uid)
+
+
 def test_tier3_grading_with_evloss_is_rejected():
     conn = db.connect(":memory:")
+    hid = _hand(conn)
     with pytest.raises(sqlite3.IntegrityError):
-        db.insert_grading(conn, hand_id=1, decision_idx=0, tier=3,
+        db.insert_grading(conn, hand_id=hid, decision_idx=0, tier=3,
                           chosen="call", best="fold", ev_loss=1.5,
                           leak_key="x|flop|call", graded_at="t")
 
 
 def test_tier3_grading_without_evloss_is_accepted():
     conn = db.connect(":memory:")
-    rid = db.insert_grading(conn, hand_id=1, decision_idx=0, tier=3,
+    hid = _hand(conn)
+    rid = db.insert_grading(conn, hand_id=hid, decision_idx=0, tier=3,
                             chosen="call", best="fold", ev_loss=None,
                             leak_key="x|flop|call", graded_at="t")
     assert rid is not None
@@ -68,7 +80,8 @@ def test_tier3_grading_without_evloss_is_accepted():
 
 def test_tier1_grading_with_evloss_is_accepted():
     conn = db.connect(":memory:")
-    rid = db.insert_grading(conn, hand_id=1, decision_idx=0, tier=1,
+    hid = _hand(conn)
+    rid = db.insert_grading(conn, hand_id=hid, decision_idx=0, tier=1,
                             chosen="jam", best="jam", ev_loss=0.0,
                             leak_key="SBjam|preflop|jam", graded_at="t")
     assert rid is not None

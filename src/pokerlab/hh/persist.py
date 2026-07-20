@@ -176,16 +176,43 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
     Rows stranded at 'running' by an earlier crashed drain are recovered to
     'pending' first, so the backlog cannot silently leak work.
 
-    Returns counts {done, missed, unsolvable, failed, recovered}.
+      * **mismatched** (the re-derived decision is not the one queued) ->
+        'failed'. Terminal and counted apart from a solver failure, because it
+        means the queue and the hand have diverged, not that the solve is hard
+        (wave-3 [B2]).
+
+    Returns counts {done, missed, unsolvable, failed, mismatched, recovered}.
     """
     recovered = db.recover_running_batch(conn)
-    done = missed = unsolvable = failed = 0
+    done = missed = unsolvable = failed = mismatched = 0
     for row in db.pending_batch(conn):
         db.set_batch_status(conn, row["id"], "running")
         try:
             hand = db.get_imported_hand(conn, row["hand_id"])
             parsed = parse_by_site(hand["site"], hand["raw"])
             d = extract_decisions(parsed)[row["decision_idx"]]
+        except Exception:  # noqa: BLE001 - per-row isolation boundary
+            # No UnsolvableSpot arm here: that exception is the *solver's*
+            # contract, so re-deriving cannot raise it. A handler for it would
+            # document a check this stage never performs.
+            db.set_batch_status(conn, row["id"], "failed")
+            failed += 1
+            continue
+
+        # The row is re-derived by INDEX against a hand parsed now, not the
+        # decision that was queued. If the parser shifted shape in between —
+        # adding or reordering a decision, which is exactly what the [E6]/[E33]
+        # parser fixes did — index N is quietly a different spot, and a preflop
+        # decision gets solved and stored as tier-2 (wave-3 [B2]). The row
+        # already carries `formation|street`, so identity is free to check.
+        # Mismatch is terminal and loud: the backlog no longer describes the
+        # hand, so grading it would write a confidently wrong row.
+        if spot_key(d) != row["spot_key"]:
+            db.set_batch_status(conn, row["id"], "failed")
+            mismatched += 1
+            continue
+
+        try:
             solution = solver(row["spot_key"], d)
         except UnsolvableSpot:
             db.set_batch_status(conn, row["id"], "failed")
@@ -217,4 +244,4 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             raise
         done += 1
     return {"done": done, "missed": missed, "unsolvable": unsolvable,
-            "failed": failed, "recovered": recovered}
+            "failed": failed, "mismatched": mismatched, "recovered": recovered}

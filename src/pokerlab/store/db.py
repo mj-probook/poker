@@ -32,6 +32,12 @@ def connect(path: str | Path = ":memory:", *, check_same_thread: bool = True
     """Open a connection with the schema applied and dict-like row access."""
     conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
+    # SQLite ignores REFERENCES clauses unless this is ON, per connection. The
+    # schema has declared `gradings.hand_id REFERENCES imported_hands(id)` since
+    # Slice E, so it read as a guarantee while enforcing nothing: a grading could
+    # point at a hand that was never imported (wave-3 [B2]). Set before the
+    # schema runs so every connection is enforcing from its first statement.
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(schema_sql())
     conn.commit()
     return conn
