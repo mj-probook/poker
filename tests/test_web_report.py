@@ -187,17 +187,26 @@ def test_a_pending_row_still_makes_the_session_partial(tmp_path):
     assert s["queued"] == 1 and s["partial"] is True
 
 
-def test_every_terminal_status_has_report_copy(tmp_path):
-    """A new terminal cause must break this, not vanish from the report.
+def test_report_copy_and_terminal_statuses_agree_in_both_directions(tmp_path):
+    """The store owns the vocabulary; this module owns only the copy.
 
-    Derived from db.BATCH_STATUSES rather than restating the list, so adding a
-    terminal state without telling the operator what to do about it is a test
-    failure instead of rows silently disappearing from the surface.
+    Compared against db.TERMINAL_STATUSES rather than restating the list, and
+    asserted BOTH ways so each failure names its own cause:
+
+      * a terminal status with no copy would render as a bare count with no
+        remedy — the defect this whole surface exists to fix, reappearing
+        silently the moment someone adds a fourth cause;
+      * copy for something that is not a terminal status is dead text that
+        `_report` can never emit, and it would quietly outlive a status the
+        store had renamed or dropped.
     """
     from pokerlab.web.app import TERMINAL_ACTIONS
 
-    terminal = set(db.BATCH_STATUSES) - {"pending", "running", "done"}
-    assert set(TERMINAL_ACTIONS) == terminal
+    statuses, copy = set(db.TERMINAL_STATUSES), set(TERMINAL_ACTIONS)
+    assert not (statuses - copy), f"terminal statuses with no operator copy: {statuses - copy}"
+    assert not (copy - statuses), f"operator copy for non-statuses: {copy - statuses}"
+    # and every terminal status is a real member of the batch vocabulary
+    assert statuses <= set(db.BATCH_STATUSES)
 
 
 def test_report_js_renders_each_terminal_cause_with_its_served_action():
