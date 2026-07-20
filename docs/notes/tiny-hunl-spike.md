@@ -177,20 +177,36 @@ The *measurements* in this note stand and reproduce. What was wrong was the
 mechanism attached to them. The NO-GO verdict is unaffected — every arm
 measured is 17–26× the oracle — and is robust either way.
 
-### The most mechanical candidate explanation: the belief axis (wave-3 [M2])
+### The most mechanical candidate explanation: the belief axis (wave-3 [M2]) — tested in R4 and rejected
 
-Offered as a **candidate**, not an established cause.
+Offered as a candidate in wave 3; measured in round 4; excluded.
 
 The net is queried, inside CFR, on beliefs it was never trained on — and not
 merely shifted, but largely disjoint:
 
 * **65.7% of leaf queries fall entirely outside the training belief support**
-  (training ranges span 14–53 non-zero classes; queries span 0–29).
+  (training ranges span 14–53 non-zero classes; queries span 0–29). R4
+  measurement: on every queried belief where an exact CFV exists (n=200 exact
+  `solve_river`), the net's masked MSE is 127.99 mean / 120.52 median vs 117.72
+  held-out control — **1.09×**. Off-distribution in the sparsity sense did not
+  translate into wrong. Candidate excluded.
 * **45% of queries are all-zero belief vectors**, which occur zero times in
-  training. The net's output there is constrained by nothing it learned, and it
-  still feeds into CFR as a counterfactual value.
+  training. That sentence was corrected twice in R4, both times by its own
+  author against their own claim: (1) each head is multiplied by the
+  OPPONENT's valid reach (`counterfactual_from_normalized`), so an
+  opponent-dead prediction is annihilated by exact zero and never reaches CFR.
+  The R4 per-branch decomposition (n=9504): both-live 24.2%, OOP-dead-only
+  37.9%, IP-dead-only 0.0%, both-dead 37.9% — so injection touches ONE head
+  (OOP) on 37.9% of queries, and the IP head is never injected at all;
+  own-reach-free values are correct CFR semantics where it does occur. (2) the
+  surviving half is measured negligible — zeroing 90.3% of OOP-head and 35.7%
+  of IP-head leaf contributions moved exploitability by **−0.3%** (3.257 →
+  3.248 bb). Structural reason, in hindsight: regrets on combos the player
+  cannot hold are non-binding, because CFR weights the played strategy by own
+  reach.
 
-This has two halves, and both are open:
+This had two halves; [R4-c] closed the parameter half, the structural half
+stays open:
 
 * **The parameter half.** Evaluation draws sparser ranges than data generation.
   Two figures, because the recorded run and the shipped default are not the same
@@ -210,9 +226,13 @@ This has two halves, and both are open:
   it. Nothing was re-measured: the figures are the ones already recorded, now
   describing the configuration that actually ships.
 
-  One character would close either. It is deliberately left open: every number
-  in this note, and both of [M1]'s seed measurements, were produced at these
-  densities. Aligning EVAL to GEN would still leave the results table describing
+  This ambiguity is now CLOSED, and the direction matters. [R4-c] aligned the
+  DEFAULT DOWN to the recorded density, so the table's row becomes the shipping
+  configuration and every number in this note — and both of [M1]'s seed
+  measurements — still describes what the code draws. Nothing went stale;
+  that is why this alignment was safe and the other one is not.
+
+  Aligning EVAL to GEN would still leave the results table describing
   a configuration that no longer ships — the recorded-vs-landed failure in
   reverse, and the more expensive mistake — so that alignment stays refused and
   `test_the_two_densities_are_not_silently_equalised` still guards it. Aligning
@@ -227,6 +247,16 @@ This has two halves, and both are open:
   Closing it means generating training data along the solver's own trajectory —
   the ReBeL self-play loop. That is a design change, not a tuning one, and it is
   recorded here as open rather than papered over.
+
+**R4 end state:** the 17× gap is **unattributed**, with two candidates
+positively excluded (belief-axis-as-inaccuracy at 1.09×; degenerate-query
+injection at −0.3%). Remaining candidates, unmeasured and recorded:
+class-level aggregation (one value per 169-class; combos within a class
+differ) and the grafted-river artifact above. The 3.257 bb net-driven
+baseline has reproduced three independent times (R3 original, R3 seed-0
+re-run, R4 arm A). Incidental performance note, not correctness: 75.8% of
+eval-loop net inference (7200/9504 queries) is degenerate states, the IP
+head's degenerate contributions all multiplied by zero on arrival.
 
 ### Two harness bugs preceded all of this
 
