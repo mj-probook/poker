@@ -56,7 +56,9 @@ def test_report_summarises_the_session_including_failures_and_backlog(imported):
     # plan §5.3: a session is PARTIAL until its tier-2 backlog is solved, and
     # the operator must be told so rather than reading a complete-looking report
     assert s["queued"] > 0 and s["partial"] is True
-    assert "failed" in s
+    # terminal rows are reported by CAUSE, not as one "failed" number — the
+    # three causes have three different remedies (see the terminal-cause tests)
+    assert "blocked" in s
 
 
 def test_report_ranks_the_exact_tier_leaks_by_ev_loss(imported):
@@ -125,3 +127,88 @@ def test_every_drill_spot_carries_its_tier_label(imported):
     assert spot["tier"] == 1                       # chart-graded, exact
     assert "exact" in spot["tier_label"].lower()
     assert "chart" in spot["tier_label"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# [P5'] follow-on: a terminal row is not "backlog". Before r1's c191f51 every
+# terminal cause was status='failed', so the report could only say a number —
+# and the PARTIAL banner promised "run pokerlab-batch and these numbers will
+# change" forever, because gate-refused rows never left the queue. The three
+# causes have three DIFFERENT remedies, and a report that does not say which
+# one applies is telling the operator to do the wrong thing.
+# --------------------------------------------------------------------------- #
+def _queued(conn, spot_key, idx, status):
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", AT, f"u{idx}")
+    rid = db.enqueue_batch(conn, spot_key, hid, idx)
+    if status != "pending":
+        db.set_batch_status(conn, rid, status)
+
+
+def test_terminal_causes_are_reported_apart_each_with_its_own_remedy(tmp_path):
+    dbp = str(tmp_path / "t.db")
+    conn = db.connect(dbp)
+    _queued(conn, "a|flop", 0, "unsolvable")
+    _queued(conn, "b|flop", 1, "mismatched")
+    _queued(conn, "c|flop", 2, "failed")
+    conn.close()
+
+    blocked = {b["status"]: b for b in _report(dbp)["session"]["blocked"]}
+
+    assert set(blocked) == {"unsolvable", "mismatched", "failed"}
+    assert all(b["count"] == 1 for b in blocked.values())
+    # each carries a DISTINCT operator action — that is the whole point
+    actions = {b["status"]: b["action"] for b in blocked.values()}
+    assert len(set(actions.values())) == 3
+    assert "solver" in actions["unsolvable"].lower()
+    assert "import" in actions["mismatched"].lower()   # NOT "retry" — it re-fails
+    assert "retry" in actions["failed"].lower()
+
+
+def test_partial_means_what_it_says_once_nothing_is_pending(tmp_path):
+    """The original defect: terminal rows kept the session PARTIAL forever."""
+    dbp = str(tmp_path / "t.db")
+    conn = db.connect(dbp)
+    _queued(conn, "a|flop", 0, "unsolvable")
+    conn.close()
+
+    s = _report(dbp)["session"]
+    assert s["queued"] == 0            # an unsolvable row is not pending work
+    assert s["partial"] is False       # ...so the report is COMPLETE
+    assert s["blocked"][0]["count"] == 1   # but the row is still visible
+
+
+def test_a_pending_row_still_makes_the_session_partial(tmp_path):
+    dbp = str(tmp_path / "t.db")
+    conn = db.connect(dbp)
+    _queued(conn, "a|flop", 0, "pending")
+    conn.close()
+
+    s = _report(dbp)["session"]
+    assert s["queued"] == 1 and s["partial"] is True
+
+
+def test_every_terminal_status_has_report_copy(tmp_path):
+    """A new terminal cause must break this, not vanish from the report.
+
+    Derived from db.BATCH_STATUSES rather than restating the list, so adding a
+    terminal state without telling the operator what to do about it is a test
+    failure instead of rows silently disappearing from the surface.
+    """
+    from pokerlab.web.app import TERMINAL_ACTIONS
+
+    terminal = set(db.BATCH_STATUSES) - {"pending", "running", "done"}
+    assert set(TERMINAL_ACTIONS) == terminal
+
+
+def test_report_js_renders_each_terminal_cause_with_its_served_action():
+    """Same rule as the tier label: the page renders copy it does not author."""
+    js = (STATIC / "report.js").read_text()
+    from pokerlab.web.app import TERMINAL_ACTIONS
+
+    assert "s.blocked" in js
+    assert "b.action" in js and "b.status" in js
+    # The page must not RESTATE the server's wording. Banning the individual
+    # words would also ban the comments that explain the design, so the check
+    # is against the actual copy: no TERMINAL_ACTIONS string may appear here.
+    for action in TERMINAL_ACTIONS.values():
+        assert action not in js, f"copy must come from the payload: {action!r}"

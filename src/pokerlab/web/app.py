@@ -33,6 +33,24 @@ from pokerlab.types import TIER_BEST_AVAILABLE, TIER_CHART
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# What the operator should DO about each terminal batch cause. Three causes,
+# three different actions — reporting them as one "failed" number told the user
+# to retry rows that a retry cannot fix (wave-3 [P5'] follow-on):
+#   * unsolvable — the spot is outside what the solver models at all.
+#   * mismatched — the queue row no longer describes the hand it points at, so
+#     re-draining re-derives the same wrong spot and fails identically. This is
+#     the one where "retry" is actively the WRONG advice.
+#   * failed     — a bug took the row down; fixing it makes a retry work.
+# Keyed by `db.BATCH_STATUSES` members; the terminal set is derived from that
+# frozenset (never restated), and a test pins that every terminal status has
+# copy here — so a new cause surfaces loudly instead of vanishing from the page.
+TERMINAL_ACTIONS: dict[str, str] = {
+    "unsolvable": "will not change without a solver upgrade",
+    "mismatched": "re-import these hands — the queue no longer describes them",
+    "failed": "a bug stopped these rows — fix it, then retry the batch",
+}
+_IN_FLIGHT = ("pending", "running")
+
 
 class Answer(BaseModel):
     drill_id: str
@@ -144,14 +162,27 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 "SELECT (SELECT COUNT(*) FROM imported_hands)            AS hands,"
                 "       (SELECT COUNT(*) FROM gradings)                  AS graded,"
                 "       (SELECT COUNT(*) FROM batch_queue"
-                "         WHERE status IN ('pending', 'running'))        AS queued,"
-                "       (SELECT COUNT(*) FROM batch_queue"
-                "         WHERE status = 'failed')                       AS failed"
+                "         WHERE status IN (?, ?))                        AS queued",
+                _IN_FLIGHT,
             ).fetchone()
             session = dict(counts)
-            # A queued row means some decision in this session has no answer key
-            # yet, which is exactly what plan §5.3 calls a PARTIAL session.
+            # PARTIAL means "work is still coming" — and now it can mean it.
+            # `queued` counts only in-flight rows, so a terminal row no longer
+            # pins the session partial forever while the banner promises numbers
+            # that will never move (wave-3 [P5'] follow-on).
             session["partial"] = session["queued"] > 0
+            # Terminal rows are not backlog, but they are not nothing either:
+            # each is reported with the action that actually clears it.
+            blocked = conn.execute(
+                "SELECT status, COUNT(*) AS count FROM batch_queue"
+                " WHERE status NOT IN (?, ?, 'done')"
+                " GROUP BY status ORDER BY count DESC, status",
+                _IN_FLIGHT,
+            )
+            session["blocked"] = [
+                dict(r) | {"action": TERMINAL_ACTIONS[r["status"]]}
+                for r in blocked
+            ]
             return {
                 "session": session,
                 "leaks": views.hh_leak_report(conn, limit=5),

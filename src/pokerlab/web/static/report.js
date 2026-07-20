@@ -48,11 +48,14 @@ function renderSummary(s) {
   const box = document.getElementById("summary");
   box.innerHTML = "";
   box.appendChild(
-    el("p", `${s.hands} hands imported · ${s.graded} decisions graded · ` +
-            `${s.failed} unsolvable`)
+    el("p", `${s.hands} hands imported · ${s.graded} decisions graded`)
   );
   // A partial session is a claim about COMPLETENESS, so it gets a banner and
   // not a footnote: numbers below it are computed over an incomplete sample.
+  // This now only fires for work that is genuinely still coming — terminal
+  // rows are reported below instead, because promising that a drain will move
+  // numbers it can never move is the same over-claim the tier labels exist to
+  // prevent (wave-3 [P5'] follow-on).
   if (s.partial) {
     box.appendChild(el(
       "div",
@@ -61,6 +64,15 @@ function renderSummary(s) {
       "banner partial"
     ));
   }
+  // Each terminal cause carries the action that actually clears IT. Rendering
+  // them as one number told the user to retry rows a retry cannot fix — and for
+  // 'mismatched' a retry re-derives the same wrong spot and fails identically.
+  (s.blocked || []).forEach((b) => {
+    const line = el("div", "", "banner blocked");
+    line.appendChild(el("strong", `${b.count} ${b.status}`));
+    line.appendChild(el("span", ` — ${b.action}`));
+    box.appendChild(line);
+  });
 }
 
 function renderLeaks(leaks) {
