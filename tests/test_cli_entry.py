@@ -9,6 +9,8 @@ drained) and the counts the operator has to see, not new logic.
 
 from pathlib import Path
 
+import pytest
+
 from pokerlab.cli import main_batch, main_import
 from pokerlab.spike import tier2
 from pokerlab.store import db
@@ -83,3 +85,83 @@ def test_batch_on_an_empty_queue_is_a_no_op(tmp_path, capsys) -> None:
     db.connect(dbp)
     assert main_batch(["--db", dbp]) == 0
     assert "done" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# [P5' follow-on] The report tells the operator "fix the bug, then retry the
+# batch" for a failed row. That advice needs a way to ACT on it: the drain only
+# picks up 'pending', so without this the only route was writing Python against
+# db.retry_failed_batch — the exact gap P4' exists to close.
+# --------------------------------------------------------------------------- #
+def _one_failed_row(dbp):
+    conn = db.connect(dbp)
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", "T", "u1")
+    rid = db.enqueue_batch(conn, "a|flop", hid, 0)
+    db.set_batch_status(conn, rid, "failed")
+    conn.commit()
+    return conn
+
+
+def test_batch_retry_reopens_bug_failures(tmp_path, capsys, monkeypatch):
+    dbp = str(tmp_path / "r.db")
+    _one_failed_row(dbp)
+    monkeypatch.setattr(tier2, "make_drain_solver",
+                        lambda conn, **kw: lambda spot_key, d: None)
+
+    assert main_batch(["--db", dbp, "--retry"]) == 0
+
+    # The contract of --retry is that the row is REOPENED before the drain.
+    # Asserting its status afterwards would test something else entirely: this
+    # fixture's raw text is not a real hand history, so the drain re-derives it,
+    # fails, and terminates the row again — correct behaviour that has nothing
+    # to do with whether the reopen worked.
+    assert "reopened    : 1" in capsys.readouterr().out
+
+
+def test_batch_retry_leaves_unsolvable_alone_by_default(tmp_path, monkeypatch):
+    """Retrying an unsolvable row re-fails by construction — so don't.
+
+    Mirrors db.retry_failed_batch's default. The CLI must not quietly widen it,
+    or the tooling starts recommending the loop the report warns against.
+    """
+    dbp = str(tmp_path / "r.db")
+    conn = db.connect(dbp)
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", "T", "u1")
+    for i, st in enumerate(("failed", "unsolvable", "mismatched")):
+        rid = db.enqueue_batch(conn, f"s{i}|flop", hid, i)
+        db.set_batch_status(conn, rid, st)
+    conn.commit()
+    monkeypatch.setattr(tier2, "make_drain_solver",
+                        lambda conn, **kw: lambda spot_key, d: None)
+
+    main_batch(["--db", dbp, "--retry"])
+
+    left = {r["spot_key"]: r["status"] for r in db.batch_rows(db.connect(dbp))}
+    assert left["s1|flop"] == "unsolvable"   # needs a solver upgrade, not a retry
+    assert left["s2|flop"] == "mismatched"   # needs a re-import, not a retry
+
+
+def test_batch_retry_accepts_an_explicit_status(tmp_path, capsys, monkeypatch):
+    """After a solver upgrade the operator can reopen that class deliberately."""
+    dbp = str(tmp_path / "r.db")
+    conn = db.connect(dbp)
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", "T", "u1")
+    rid = db.enqueue_batch(conn, "a|flop", hid, 0)
+    db.set_batch_status(conn, rid, "unsolvable")
+    conn.commit()
+    monkeypatch.setattr(tier2, "make_drain_solver",
+                        lambda conn, **kw: lambda spot_key, d: None)
+
+    main_batch(["--db", dbp, "--retry", "unsolvable"])
+
+    assert "reopened    : 1 (unsolvable)" in capsys.readouterr().out
+
+
+def test_batch_rejects_a_non_terminal_retry_status(tmp_path, capsys) -> None:
+    """A bad status is a USAGE error — argparse's exit 2, not a silent no-op."""
+    dbp = str(tmp_path / "r.db")
+    db.connect(dbp)
+    with pytest.raises(SystemExit) as exc:
+        main_batch(["--db", dbp, "--retry", "done"])
+    assert exc.value.code == 2
+    assert "terminal" in capsys.readouterr().err.lower()

@@ -119,9 +119,26 @@ def main_batch(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default=DEFAULT_DB, help="SQLite path")
     ap.add_argument("--iters", type=int, default=tier2.DEFAULT_ITERS,
                     help="CFR iterations per solve")
+    # The report tells the operator "fix the bug, then retry the batch"; the
+    # drain only picks up 'pending', so without this that advice needed Python.
+    # Defaults to 'failed' exactly as `db.retry_failed_batch` does — the CLI
+    # must not quietly widen it, because retrying an 'unsolvable' or
+    # 'mismatched' row re-fails by construction and sends the operator round
+    # the loop the report exists to warn about.
+    ap.add_argument("--retry", nargs="*", metavar="STATUS",
+                    help="reopen terminal rows before draining (default: "
+                         "failed; pass e.g. 'unsolvable' after a solver "
+                         "upgrade, or 'mismatched' after re-importing)")
     args = ap.parse_args(argv)
 
     conn = db.connect(args.db)
+    if args.retry is not None:
+        statuses = tuple(args.retry) or ("failed",)
+        try:
+            reopened = db.retry_failed_batch(conn, statuses)
+        except ValueError as exc:
+            ap.error(str(exc))          # exits 2 — a bad status is a usage error
+        print(f"reopened    : {reopened} ({', '.join(statuses)})")
     result = drain_batch_queue(
         conn, tier2.make_drain_solver(conn, iters=args.iters),
         graded_at=datetime.now(timezone.utc).isoformat())
