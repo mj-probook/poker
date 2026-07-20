@@ -379,12 +379,18 @@ def test_the_documented_belief_sparsity_gap_matches_the_shipped_config():
     without updating the note — including anyone who "helpfully" aligns them.
     """
     gen = _mean_nonzero_classes(hunl.GEN_KEEP_FRAC)
-    ev = _mean_nonzero_classes(hunl.EVAL_KEEP_FRAC)
+    ev_default = _mean_nonzero_classes(hunl.EVAL_KEEP_FRAC)
+    # the results table's run OVERRIDES the default with eval_keep_frac=0.10,
+    # so the recorded numbers describe this density, not the shipped one
+    ev_recorded = _mean_nonzero_classes(0.10)
 
-    assert ev < gen, "evaluation must still be the sparser draw"
-    # the figures quoted in the spike note's belief-axis section
-    assert gen == pytest.approx(34.2, abs=0.5), f"doc says gen 34.2, measured {gen:.1f}"
-    assert ev == pytest.approx(20.3, abs=0.5), f"doc says eval 20.3, measured {ev:.1f}"
+    assert ev_default < gen and ev_recorded < gen, "eval must be the sparser draw"
+    # the three figures quoted in the note's belief-axis table
+    assert gen == pytest.approx(34.2, abs=0.5), f"doc says gen 34.2, got {gen:.1f}"
+    assert ev_recorded == pytest.approx(17.1, abs=0.5), (
+        f"doc says recorded-run eval 17.1, got {ev_recorded:.1f}")
+    assert ev_default == pytest.approx(20.6, abs=0.5), (
+        f"doc says shipped-default eval 20.6, got {ev_default:.1f}")
 
 
 def test_the_two_densities_are_not_silently_equalised():

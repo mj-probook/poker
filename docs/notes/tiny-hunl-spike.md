@@ -192,15 +192,28 @@ merely shifted, but largely disjoint:
 
 This has two halves, and both are open:
 
-* **The parameter half.** Evaluation draws sparser ranges than data generation
-  (`EVAL_KEEP_FRAC` 0.12 vs `GEN_KEEP_FRAC` 0.2 — a measured **20.3 vs 34.2**
-  mean non-zero classes, seed 0, n=250). One character would close it. It is
-  deliberately left open: every number in this note, and both of [M1]'s seed
-  measurements, were produced at these densities, so aligning them would leave
-  the results table describing a configuration that no longer ships. That is the
-  recorded-vs-landed failure in reverse, and the more expensive mistake.
-  `test_spike_hunl` pins the documented gap against the code so neither can move
-  without the other.
+* **The parameter half.** Evaluation draws sparser ranges than data generation.
+  Two figures, because the recorded run and the shipped default are not the same
+  configuration — measured as mean non-zero classes per sampled range, seed 0,
+  n=250:
+
+  | configuration | eval density | mean non-zero classes | vs generation (0.2 → 34.2) |
+  |---|---|---|---|
+  | the run recorded above (explicit `eval_keep_frac=0.10`) | 0.10 | **17.1** | half as dense |
+  | `run_spike` shipped default (`EVAL_KEEP_FRAC`) | 0.12 | **20.6** | still sparser |
+
+  The numbers in the results table were produced by the FIRST row — the run
+  overrides the default, so quoting the default's gap alongside them would
+  describe a configuration that produced none of them. Both are stated to remove
+  that ambiguity; it is what made two independent measurements of "the" sparsity
+  gap disagree (17.1 vs 20.6) when neither was wrong.
+
+  One character would close either. It is deliberately left open: every number
+  in this note, and both of [M1]'s seed measurements, were produced at these
+  densities, so aligning them would leave the results table describing a
+  configuration that no longer ships — the recorded-vs-landed failure in
+  reverse, and the more expensive mistake. `test_spike_hunl` pins BOTH figures
+  against the code so neither can move without this note moving too.
 * **The structural half, which no parameter closes.** Beliefs reaching the leaf
   are *strategy-weighted reaches* produced by CFR iterations; training beliefs
   are sampled independently. No value of any density parameter makes an
