@@ -8,6 +8,7 @@ Slice F reuses this module for HH leak reports over `gradings`.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 
 def worst_leak_categories(conn: sqlite3.Connection, limit: int = 5,
@@ -149,3 +150,68 @@ def tier3_frequency_report(conn: sqlite3.Connection) -> list[dict]:
     )
     return [dict(r) | {"flags": [f for f in r["flags"].split(",") if f]}
             for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Skill gates (plan §5.4: decision quality measured as a TREND over samples,
+# never as a single number). Both are queries over columns that already exist —
+# `gradings.graded_at` and `drill_attempts.kind`/`.ts` — because a derived
+# metric is never a table (plan §3). Wave-3 [P6'].
+# --------------------------------------------------------------------------- #
+_BUCKETS = {"day": "%Y-%m-%d", "week": "%Y-W%W", "month": "%Y-%m"}
+
+
+def ev_loss_per_100_by_category_over_time(
+        conn: sqlite3.Connection, bucket: str = "week") -> list[dict]:
+    """EV-loss/100 per (time bucket, leak_key) over tiers 1-2 — is it closing?
+
+    Gate 1: a leak is only really fixed if its bb/100 falls across buckets, and
+    a single lifetime average cannot show that. Tier 3 is excluded because it
+    carries no ev_loss at all — including it would silently dilute the rate
+    with rows that never had a number (plan §5.3 honesty rule).
+    """
+    try:
+        fmt = _BUCKETS[bucket]
+    except KeyError:
+        raise ValueError(
+            f"bucket must be one of {sorted(_BUCKETS)}, got {bucket!r}") from None
+    rows = conn.execute(
+        "SELECT strftime(?, graded_at) AS bucket, leak_key,"
+        "       COUNT(*)             AS decisions,"
+        "       100.0 * AVG(ev_loss) AS ev_loss_per_100"
+        "  FROM gradings"
+        " WHERE tier IN (1, 2) AND ev_loss IS NOT NULL"
+        " GROUP BY bucket, leak_key"
+        " ORDER BY bucket, ev_loss_per_100 DESC, leak_key",
+        (fmt,),
+    )
+    return [dict(r) for r in rows]
+
+
+def accuracy_by_kind(conn: sqlite3.Connection, kind: str | None = None,
+                     window_days: int = 30, *, now: str | None = None
+                     ) -> list[dict]:
+    """Drill accuracy per `kind` over the last `window_days`.
+
+    Gate 2: lifetime accuracy is dominated by however the first weeks went, so
+    the gate has to be windowed to say anything about current form. Splitting
+    by kind keeps chip-EV jam/fold and ICM apart — they are different skills and
+    ICM is scored on a different basis entirely (generator: ICM ev_loss is a
+    $-delta), so one blended accuracy number would answer no question at all.
+
+    A kind with no attempts in the window is ABSENT, not 0.0: no data is not the
+    same claim as no skill. `now` defaults to the current UTC time and is
+    injectable so callers (and tests) can ask about a fixed instant.
+    """
+    ref = now if now is not None else datetime.now(timezone.utc).isoformat()
+    rows = conn.execute(
+        "SELECT kind, COUNT(*) AS attempts, AVG(correct) AS accuracy,"
+        "       AVG(ev_loss) AS avg_ev_loss"
+        "  FROM drill_attempts"
+        " WHERE ts >= datetime(?, ?)"
+        "   AND (? IS NULL OR kind = ?)"
+        " GROUP BY kind"
+        " ORDER BY accuracy, kind",
+        (ref, f"-{int(window_days)} days", kind, kind),
+    )
+    return [dict(r) for r in rows]

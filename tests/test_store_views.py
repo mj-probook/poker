@@ -103,3 +103,67 @@ def test_category_priority_excludes_tier_3():
     conn = db.connect(":memory:")
     _grade(conn, "6max:LJ|flop|bet|-", None, tier=3)
     assert views.category_priority(conn) == []
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 finding [P6'] (P1): plan §5.4 measures progress by "decision-quality
+# trends over large samples", and neither trend was computable. Both are
+# derived, so both are queries (plan §3) — no schema was added for either.
+# --------------------------------------------------------------------------- #
+def test_ev_loss_trend_buckets_by_category_over_time():
+    conn = db.connect(":memory:")
+    # same category, two months, improving; plus a second category
+    for i, (month, ev) in enumerate([("01", 2.0), ("01", 4.0), ("02", 1.0)]):
+        _grade(conn, "SBjam|preflop|jam|10", ev, idx=i)
+        conn.execute("UPDATE gradings SET graded_at=? WHERE id=(SELECT MAX(id)"
+                     " FROM gradings)", (f"2026-{month}-15T12:00:00",))
+    conn.commit()
+
+    rows = views.ev_loss_per_100_by_category_over_time(conn, bucket="month")
+
+    jan = next(r for r in rows if r["bucket"] == "2026-01")
+    feb = next(r for r in rows if r["bucket"] == "2026-02")
+    assert jan["ev_loss_per_100"] == pytest.approx(300.0)   # mean(2,4) * 100
+    assert feb["ev_loss_per_100"] == pytest.approx(100.0)   # the leak is closing
+    assert jan["decisions"] == 2 and feb["decisions"] == 1
+    assert [r["bucket"] for r in rows] == sorted(r["bucket"] for r in rows)
+
+
+def test_ev_loss_trend_never_includes_tier_3():
+    """Tier 3 has no ev_loss; a trend that counted it would be a lie."""
+    conn = db.connect(":memory:")
+    _grade(conn, "6max:LJ|flop|bet|-", None, tier=3)
+    assert views.ev_loss_per_100_by_category_over_time(conn) == []
+
+
+def test_accuracy_by_kind_within_a_window():
+    conn = db.connect(":memory:")
+    # jamfold: 1/2 correct recently, plus an old attempt outside the window
+    db.insert_drill_attempt(conn, "k", "jamfold", "jam", True, 0.0,
+                            "2026-07-18T12:00:00")
+    db.insert_drill_attempt(conn, "k", "jamfold", "jam", False, 1.0,
+                            "2026-07-18T13:00:00")
+    db.insert_drill_attempt(conn, "k", "jamfold", "jam", False, 1.0,
+                            "2026-01-01T00:00:00")
+    db.insert_drill_attempt(conn, "k", "icm", "jam", True, 0.0,
+                            "2026-07-18T14:00:00")
+    now = "2026-07-19T00:00:00"
+
+    rows = {r["kind"]: r for r in
+            views.accuracy_by_kind(conn, window_days=7, now=now)}
+
+    assert rows["jamfold"]["attempts"] == 2                  # old one excluded
+    assert rows["jamfold"]["accuracy"] == pytest.approx(0.5)
+    assert rows["icm"]["accuracy"] == pytest.approx(1.0)
+
+    only = views.accuracy_by_kind(conn, kind="icm", window_days=7, now=now)
+    assert [r["kind"] for r in only] == ["icm"]
+
+
+def test_accuracy_by_kind_reports_an_empty_window_as_no_rows():
+    """No attempts in the window is zero DATA, never zero accuracy."""
+    conn = db.connect(":memory:")
+    db.insert_drill_attempt(conn, "k", "jamfold", "jam", False, 1.0,
+                            "2026-01-01T00:00:00")
+    assert views.accuracy_by_kind(conn, window_days=7,
+                                  now="2026-07-19T00:00:00") == []
