@@ -172,3 +172,44 @@ def test_no_chips_behind_writes_no_solve():
     conn = db.connect()
     assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
     assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3: `solvable()` gated on POSITION (hero acts first postflop) but the
+# subgame it builds is rooted at "OOP to act, no bet faced". Those are not the
+# same claim. A hero can be OOP and still be at their SECOND action of the
+# street, facing a bet — and the machinery then solved the root node and graded
+# the hero's action against it.
+#
+# The crash is the lucky case (`ValueError: action 'call' not in ['check','jam']`,
+# surfaced by w3-product-builder building pokerlab-batch). The dangerous case is
+# silent: when the hero's action happens to exist in the wrong node's action
+# set, it grades confidently against a decision that never happened.
+# --------------------------------------------------------------------------- #
+def test_a_hero_facing_a_bet_is_not_the_subgame_root():
+    parsed, _ = _ante_hu()
+    ds = extract_decisions(parsed)
+    facing = [d for d in ds if d.tier == TIER_SOLVER and len(d.board) >= 4
+              and d.to_call > 0]
+    for d in facing:
+        assert not tier2.solvable(d), (
+            f"idx={d.index}: hero faces {d.to_call}bb, but the solved tree's root "
+            "offers no call — that spot cannot be graded against this subgame")
+
+
+def test_the_multiway_river_call_is_refused():
+    """The exact spot that crashed the drain: hero's 2nd river action, facing 2000."""
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    d = next(x for x in extract_decisions(parse_pokerstars(raw))
+             if x.street == "river" and x.action_type == "call")
+    assert d.to_call > 0
+    assert not tier2.solvable(d)
+
+
+def test_the_root_spot_on_the_same_street_is_still_solvable():
+    """The fix must not refuse the genuine root: same street, hero acts first."""
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    ds = extract_decisions(parse_pokerstars(raw))
+    root = next(x for x in ds if x.street == "river" and x.to_call == 0
+                and x.tier == TIER_SOLVER)
+    assert tier2.solvable(root), "an unfaced postflop root must stay tier-2"

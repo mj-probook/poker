@@ -122,11 +122,23 @@ def hero_is_oop(d: Decision) -> bool:
 
 
 def solvable(d: Decision) -> bool:
-    """True iff this is a turn/river spot with the hero as OOP root actor.
+    """True iff this is a turn/river spot the hero is at the ROOT of.
 
     The ONE gate for tier-2 solving: every entry point routes through it, so the
     drain worker and the cache warmer cannot disagree about what is solvable
     (wave-2 [Q22]).
+
+    `hero_is_oop` answers a question about POSITION; it does not answer whether
+    the hero is at the node the solver actually builds. `build_tree` roots the
+    subgame at "OOP to act, no bet outstanding", but an OOP hero can be at their
+    SECOND action of the street — they checked, villain bet, and now they face
+    it. The gate admitted those, so the machinery solved the root and graded the
+    hero's real action against a decision that never happened. `to_call == 0` is
+    what makes the gate's claim match the tree's shape.
+
+    The crash it produced (`action 'call' not in ['check', 'jam']`) was the
+    lucky half. When the hero's action happened to exist in the wrong node's
+    action set, it graded silently and confidently against the wrong node.
 
     A hero with nothing behind is refused rather than fabricated. The stack used
     to be `max(eff_bb - pot0/2, pot0)`, whose clamp INVENTED chips exactly when
@@ -138,6 +150,7 @@ def solvable(d: Decision) -> bool:
     """
     return (d.tier == TIER_SOLVER and d.game_state is not None
             and len(d.board) >= 4 and hero_is_oop(d)
+            and d.to_call == 0
             and effective_behind_bb(d) > 0.0)
 
 

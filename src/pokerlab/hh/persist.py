@@ -253,22 +253,43 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             db.set_batch_status(conn, row["id"], "pending")  # still drainable
             missed += 1
             continue
-        g = grade_tier2(d, solution)
-        # The grading and the row's 'done' mark are ONE transaction: a crash
+        # GRADING IS INSIDE THE BOUNDARY. [10] said a bug must never cost the
+        # rest of the backlog, but the boundary only wrapped the solve half:
+        # anything `grade_tier2` raised escaped the loop, skipping every
+        # remaining row and stranding this one at 'running'. It raises for real
+        # — a solution whose action space does not contain the hero's actual
+        # action is a ValueError out of `drills.scoring.score`.
+        #
+        # The grading and the row's 'done' mark stay ONE transaction: a crash
         # between them would otherwise leave the row 'running' with its grading
         # already stored, and recovery would reopen it for a second, duplicate
         # grading. Committing them together means that state cannot exist, so
         # recovery stays safe as written (wave-2 [E14]).
         try:
+            g = grade_tier2(d, solution)
             db.insert_grading(conn, row["hand_id"], d.index, g.tier, g.chosen,
                               # '' = no single best action (see persist_session)
                               g.best or "", g.ev_loss, g.leak_key, graded_at,
-                              commit=False)
+                              commit=False,
+                              # the score already computed how often the solver
+                              # plays the hero's action; dropping it would throw
+                              # away the honest half of a tier-2 grade
+                              frequency=g.frequency)
             db.set_batch_status(conn, row["id"], "done", commit=False)
             conn.commit()
-        except Exception:
+        except UnsolvableSpot:
             conn.rollback()
-            raise
+            db.set_batch_status(conn, row["id"], "failed")
+            unsolvable += 1
+            continue
+        except Exception:  # noqa: BLE001 - per-row isolation boundary
+            # Roll the partial write back FIRST so a failed row never leaves a
+            # grading behind, then close the row and keep draining: the whole
+            # point of [10] is that one bad row costs one row.
+            conn.rollback()
+            db.set_batch_status(conn, row["id"], "failed")
+            failed += 1
+            continue
         done += 1
     return {"done": done, "missed": missed, "unsolvable": unsolvable,
             "failed": failed, "mismatched": mismatched, "recovered": recovered}
