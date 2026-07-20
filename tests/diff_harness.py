@@ -99,10 +99,17 @@ def bb_ante_setup(seed: int) -> HandSetup:
     uncalled bet — and both existing axes were green through all of it.
 
     BB ante is the standard modern MTT structure, so this is the common case,
-    not an exotic one.
+    not an exotic one. That is also why this axis alone runs to nine seats: the
+    PLAN's training target is live FULL-RING, and an axis whose docstring calls
+    itself the common case while generating at most six seats was not covering
+    the case it named. r3-adversarial probed n=7/8/9 over 4000 hands with an
+    independent bridge and found 0 mismatches BEFORE this widened, so the seats
+    it adds are regression detection over behavior already known good, not a
+    fix. `short_stack_setup` stays at 2..6 deliberately — [E1] was pinned there
+    and re-pinning it is a separate decision with its own evidence.
     """
     rng = random.Random(seed ^ 0xBBA07E)
-    n = rng.randint(2, 6)
+    n = rng.randint(2, 9)
     bb_ante = rng.choice([BB, BB, BB // 2, 2 * BB])
     stacks = []
     for _ in range(n):
