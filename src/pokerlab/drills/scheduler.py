@@ -62,6 +62,20 @@ MAX_INTERVAL_DAYS = 365.0
 # vocabulary to D=32 changed the answer again without anything in the scheduler
 # moving. cap=1 was rejected: it round-robins away the resurfacing this exists
 # to do.
+#
+# That formula is an UPPER BOUND, not a prediction, and the gap matters when
+# tuning (round-3 adversarial finding [P3]). Under an all-wrong policy — every
+# answer incorrect, so every category lapses due-now and none can rank its way
+# out — the ACHIEVED distinct count saturates at 4 and stops responding to the
+# vocabulary at all. Measured, S=40: D=6 -> 4, D=12 -> 4, D=32 -> 4, D=64 -> 4,
+# against a formula predicting 6, 12, 14, 14.
+#
+# The saturation is set by a DIFFERENT knob than the ceiling: it is SHARE_CAP
+# arithmetic, roughly ceil(1 / SHARE_CAP) = 3 categories to keep each under the
+# share bound, plus one more in churn. So raising RUN_CAP or the vocabulary
+# moves the ceiling and changes nothing here; only SHARE_CAP moves the floor a
+# struggling user actually experiences. Tune the one that governs the case you
+# care about.
 CONSECUTIVE_SERVE_CAP = 2
 SHARE_WINDOW = 40        # trailing serves the share is measured over
 SHARE_CAP = 0.40         # max fraction of that window one category may hold
