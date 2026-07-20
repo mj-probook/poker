@@ -66,7 +66,7 @@
 
 **Storage (pinned in round 2):** **SQLite** for app state — tables `imported_hands`, `gradings`, `drill_attempts`, `sr_state` (SM-2/Leitner), `solution_index`. Solve outputs live on disk (one file per solve, keyed by SpotKey) with the index in SQLite. **Derived metrics are queries, not tables** — leak rankings, EV-loss trends, and skill-gate stats are computed views over `gradings`/`drill_attempts`; nothing speculative is persisted.
 
-**UI (pinned for M2):** local web view (table + range grid rendering beat a TUI for drills); functional only, no animation polish. The UI↔drill-engine contract is one loop: `next_spot() → Spot`, `submit_action(action) → Score` (per the §1 decision-ε rule).
+**UI (pinned for M2):** local web view (table + range grid rendering beat a TUI for drills); functional only, no animation polish. The UI↔drill-engine contract is one loop: `next_spot() → Spot`, `submit_action(action) → Score` (per the §1 decision-ε rule). *As built (rev 3.2): the table view, drill loop, feedback (incl. ICM-$ units and prize ladder), and leak report shipped; the range grid is deferred to the post-review backlog — current drills are single-decision spots where the grid adds no answer-relevant information, and it becomes worth building alongside the deferred resteal/postflop drills whose answers are range-shaped. A deferral, not an oversight.*
 
 ### 3b. Contracts to pin before implementation (the parallelization surface)
 

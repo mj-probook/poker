@@ -197,7 +197,10 @@ def accuracy_by_kind(conn: sqlite3.Connection, kind: str | None = None,
     the gate has to be windowed to say anything about current form. Splitting
     by kind keeps chip-EV jam/fold and ICM apart — they are different skills and
     ICM is scored on a different basis entirely (generator: ICM ev_loss is a
-    $-delta), so one blended accuracy number would answer no question at all.
+    $-delta; the correctness thresholds differ by the pool/chips unit
+    conversion, ~25x on the bubble fixture), so one blended accuracy number
+    would answer no question at all — and wrongly, since nothing in the
+    blended figure would reveal the units mismatch.
 
     A kind with no attempts in the window is ABSENT, not 0.0: no data is not the
     same claim as no skill. `now` defaults to the current UTC time and is
