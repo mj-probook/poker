@@ -31,6 +31,40 @@ MIN_EASINESS = 1.3
 # syllabus has no use for an interval beyond a year, so both are capped.
 MAX_EASINESS = 3.0
 MAX_INTERVAL_DAYS = 365.0
+# Monopoly bounds (round-3 ruling on [A4]/[P2']). TWO independent limits,
+# because the first one alone provably does not do the job:
+#
+#   RUN  — after this many drills in a row on one category, move on.
+#   SHARE— a category over this fraction of the trailing window is de-ranked
+#          below everything else until it drops back under.
+#
+# The run cap alone bounds the RUN and not the SHARE. Capping runs at 3 turned
+# a 40/40 monopoly into a perfect `.LLL.LLL.LLL...` duty cycle: the invariant
+# held on every single serve while the user still spent 75% of the evening on
+# one category and 21 of 32 categories went untouched. A bound that its own
+# failure mode satisfies is not a bound, so the share is limited directly.
+#
+# 40% is a product judgment, not arithmetic: 16 of 40 drills on your worst leak
+# is a strong plurality — targeted practice is the entire point of resurfacing —
+# while the other 24 slots still interleave the syllabus. 75% is a stuck queue.
+#
+# Slot arithmetic for the run cap, with its assumptions made explicit so future
+# tuning is informed rather than surprised. For a session of S drills over a
+# vocabulary of D categories, one category persistently ranking worst, the run
+# cap alone admits at most
+#
+#     distinct categories reached = min(D, 1 + floor(S / (RUN_CAP + 1)))
+#
+# i.e. the ceiling is f(cap, session length, vocabulary) — NOT a constant. At
+# S=40, D=12: cap=1 -> 12/12, cap=2 -> 12/12 (14 slots, vocabulary-limited),
+# cap=3 -> 11/12, cap=4 -> 9/12. That ceiling is why an earlier "12/12 coverage"
+# pass condition was unsatisfiable at cap=3, and why [E49] tripling the
+# vocabulary to D=32 changed the answer again without anything in the scheduler
+# moving. cap=1 was rejected: it round-robins away the resurfacing this exists
+# to do.
+CONSECUTIVE_SERVE_CAP = 2
+SHARE_WINDOW = 40        # trailing serves the share is measured over
+SHARE_CAP = 0.40         # max fraction of that window one category may hold
 
 # A category no evidence has touched yet ranks as "nothing known", not as
 # "known to be fine" — both signals absent read 0 (see `select_next`).
@@ -166,6 +200,58 @@ def schedule_attempt(conn: sqlite3.Connection, leak_key: str, correct: bool,
     return updated
 
 
+def _capped_category(conn: sqlite3.Connection) -> str | None:
+    """The category that has just been served CONSECUTIVE_SERVE_CAP times running.
+
+    A lapse is due immediately (SM-2, round-2 finding [E51]) and a persistently
+    failed category keeps the worst error rate, so the two together let one
+    category take every drill in a session — measured 40/40 for three of five
+    days against an agent whose leak never resolves, which is exactly the user
+    the product exists for (round-3 finding [A4]/[P2']). The lapse semantics are
+    right and stay; this bounds the monopoly they permit.
+
+    Derived from `drill_attempts` rather than held in memory so it survives a
+    restart and cannot drift from what was actually served.
+    """
+    rows = conn.execute(
+        "SELECT leak_key FROM drill_attempts ORDER BY id DESC LIMIT ?",
+        (CONSECUTIVE_SERVE_CAP,)).fetchall()
+    if len(rows) < CONSECUTIVE_SERVE_CAP:
+        return None
+    head = rows[0]["leak_key"]
+    return head if all(r["leak_key"] == head for r in rows) else None
+
+
+def _oversubscribed(conn: sqlite3.Connection) -> set[str]:
+    """Categories holding more than SHARE_CAP of the trailing serve window.
+
+    The share is measured over a fixed-width window (SHARE_WINDOW), not over
+    "however many rows exist yet": a partial window makes the denominator tiny
+    early on, so the second serve of a fresh session reads as 100% and the
+    bound fires on noise. With a fixed denominator a category has to actually
+    accumulate SHARE_CAP*SHARE_WINDOW serves before it is de-ranked.
+
+    Like `_capped_category` this reads `drill_attempts` — what was actually
+    SERVED — so it survives a restart and cannot drift from reality. The window
+    deliberately spans sessions: a leak that ate yesterday evening should start
+    today already de-ranked, not with a clean slate.
+    """
+    rows = conn.execute(
+        "SELECT leak_key FROM drill_attempts ORDER BY id DESC LIMIT ?",
+        (SHARE_WINDOW,)).fetchall()
+    if not rows:
+        return set()
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["leak_key"]] = counts.get(r["leak_key"], 0) + 1
+    # `>=`, not `>`: de-rank the category that has REACHED the allowance, so it
+    # never exceeds it. `n > limit` lets a category sit at limit+1 (17/40 =
+    # 42.5% against a 40% bound) — the bound would be breached by exactly the
+    # serve that triggers it.
+    limit = SHARE_CAP * SHARE_WINDOW
+    return {k for k, n in counts.items() if n >= limit}
+
+
 def select_next(conn: sqlite3.Connection, now: datetime,
                 categories: Iterable[str] | None = None) -> str | None:
     """The leak_key to drill next: due first (worst error-rate, then worst
@@ -201,19 +287,54 @@ def select_next(conn: sqlite3.Connection, now: datetime,
 
     prio = {r["leak_key"]: r for r in views.category_priority(conn)}
 
-    def rank(s: SRState) -> tuple[float, float, datetime]:
+    # An over-subscribed category sorts BELOW every other candidate rather than
+    # being removed: de-ranking composes with the priority order instead of
+    # replacing it, and it degrades gracefully — when the over-subscribed
+    # category is the only thing left it is still served, so the bound can
+    # never leave the user without a drill. False < True, so this key sinks it.
+    over = _oversubscribed(conn)
+
+    def rank(s: SRState) -> tuple[bool, float, float, datetime]:
         p = prio.get(s.leak_key, _NO_PRIORITY)
-        return (-p["error_rate"], -p["ev_loss_per_100"], _due_dt(s))
+        return (s.leak_key in over, -p["error_rate"],
+                -p["ev_loss_per_100"], _due_dt(s))
 
-    due = [s for s in states if _is_due(s, now)]
-    if due:
-        due.sort(key=rank)
-        return due[0].leak_key
+    blocked = _capped_category(conn)
+    due_keys = [s.leak_key for s in sorted((s for s in states if _is_due(s, now)),
+                                           key=rank)]
+    soon_keys = [s.leak_key for s in next_due(states)]
+    seen = {s.leak_key for s in states}
+    unseen = [c for c in known if c not in seen] if known is not None else []
 
-    if known is not None:                       # nothing due -> anything unseen
-        seen = {s.leak_key for s in states}
-        unseen = [c for c in known if c not in seen]
-        if unseen:
-            return unseen[0]
+    def first(pool: list[str], *, drop_over: bool) -> str | None:
+        for k in pool:
+            if k == blocked or (drop_over and k in over):
+                continue
+            return k
+        return None
 
-    return next_due(states)[0].leak_key if states else None
+    # Both bounds are applied by SKIPPING, at every rung — not by sorting.
+    #
+    # Sorting an over-subscribed category last is inert exactly when it matters
+    # most: a persistent lapse is due-now while every correctly-answered
+    # category is stamped a day out, so `due` frequently holds that ONE key and
+    # ordering a single-element list changes nothing. The same inertness hit
+    # the run cap first (it was excluded from the due loop but not from the
+    # fallbacks, and the fallbacks are where the monopoly actually landed).
+    # Skipping, with a relaxation ladder underneath, is what makes either bound
+    # real.
+    #
+    # The ladder degrades one constraint at a time, so the bounds can never
+    # leave the user with no drill: prefer a category under BOTH bounds (due,
+    # then never-seen, then soonest-due even if slightly early), and only then
+    # readmit an over-subscribed one. Serving a category a few minutes early is
+    # the price of the bounds, and it is the right price — the alternative
+    # measured 40/40 on a single category.
+    for pool, drop_over in ((due_keys, True), (unseen, True), (soon_keys, True),
+                            (due_keys, False), (soon_keys, False)):
+        pick = first(pool, drop_over=drop_over)
+        if pick is not None:
+            return pick
+    # Only the run-capped category exists at all: yield rather than dead-end.
+    # The bounds limit a monopoly; they do not refuse to serve.
+    return due_keys[0] if due_keys else (soon_keys[0] if soon_keys else None)

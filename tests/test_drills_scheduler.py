@@ -254,3 +254,107 @@ def test_due_dt_survives_a_saturated_far_future_stamp():
     st = sch.SRState("k", 2.5, 1.0, 0, hostile)
     assert sch._due_dt(st)                                        # no raise
     assert sch.next_due([st, sch.SRState("n", 2.5, 0.0, 0, NOW.isoformat())])
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 findings [A4]/[P2']: a persistently-failing category monopolized the
+# session. A lapse is due immediately ([E51], SM-2 fidelity) and a category
+# that keeps being answered wrong keeps the worst error rate, so the worst leak
+# re-won the ranking on every single pick -- measured 40/40 drills on one
+# category for three of five simulated days, against exactly the user this
+# product exists for (the one whose leak does NOT resolve). The lapse semantics
+# are correct and stay; `CONSECUTIVE_SERVE_CAP` bounds the monopoly they allow.
+# --------------------------------------------------------------------------- #
+def _serve_and_answer(conn, cats, now, *, failing: str) -> str:
+    """One drill-loop turn: ask the scheduler, then record a PERSISTENT miss.
+
+    Mirrors what web/app.py does per answer -- record the attempt AND review
+    the SM-2 state. The cap is derived from `drill_attempts` (what was actually
+    served) rather than from `sr_state`, so a test that only scheduled would
+    never exercise it.
+    """
+    key = sch.select_next(conn, now, categories=cats)
+    assert key is not None
+    correct = key != failing            # the seeded leak is NEVER answered right
+    db.insert_drill_attempt(conn, key, "jamfold", "fold", correct, 0.0,
+                            now.isoformat())
+    sch.schedule_attempt(conn, key, correct, now)
+    return key
+
+
+def test_a_persistent_leak_cannot_monopolize_the_session():
+    """The post-fix invariant: no category is served more than the cap in a row.
+
+    Asserted on the CAP, not on a coverage count: coverage is a function of the
+    vocabulary size (which the [E49] ante rev tripled, 12 -> 32) and of session
+    length, so pinning a coverage number bakes today's syllabus into a
+    scheduler test. The cap is the actual contract and is independent of both.
+    """
+    conn = db.connect()
+    cats = [f"cat{i}|preflop|jam|10" for i in range(8)]
+    leak = cats[0]
+    now = NOW
+    served = []
+    for _ in range(60):
+        served.append(_serve_and_answer(conn, cats, now, failing=leak))
+        now += timedelta(minutes=1)
+
+    run = worst = 1
+    for prev, cur in zip(served, served[1:]):
+        run = run + 1 if cur == prev else 1
+        worst = max(worst, run)
+    assert worst <= sch.CONSECUTIVE_SERVE_CAP, (
+        f"{worst} consecutive serves on one category "
+        f"(cap is {sch.CONSECUTIVE_SERVE_CAP}); served={served[:20]}")
+    # ...and the cap must not have starved the leak either: it is still the
+    # worst category and must still get the largest share of the session.
+    assert served.count(leak) == max(served.count(c) for c in cats)
+
+
+def test_a_persistent_leak_cannot_take_more_than_its_share_of_the_window():
+    """The run cap bounds the RUN; this bounds the SHARE. Both are needed.
+
+    Capping runs alone converts a 40/40 monopoly into a `.LLL.LLL...` duty
+    cycle: the run invariant holds on every serve while the category still
+    takes three-quarters of the session. So this asserts the property the run
+    cap cannot express -- over EVERY trailing window, no category exceeds
+    SHARE_CAP. Sliding the window (rather than checking the total) is what
+    makes it a real bound: a category could sit under the limit overall while
+    completely owning one stretch.
+    """
+    conn = db.connect()
+    cats = [f"cat{i}|preflop|jam|10" for i in range(8)]
+    now = NOW
+    served = []
+    for _ in range(150):
+        served.append(_serve_and_answer(conn, cats, now, failing=cats[0]))
+        now += timedelta(minutes=1)
+
+    w = sch.SHARE_WINDOW
+    limit = sch.SHARE_CAP * w
+    worst, at = 0, 0
+    for i in range(len(served) - w + 1):
+        window = served[i:i + w]
+        n = max(window.count(c) for c in set(window))
+        if n > worst:
+            worst, at = n, i
+    assert worst <= limit, (
+        f"{worst}/{w} serves ({worst / w:.0%}) on one category in the window "
+        f"starting at {at}; cap is {limit:.0f}/{w} ({sch.SHARE_CAP:.0%})")
+
+
+def test_the_cap_still_lets_every_other_category_through():
+    """The cap must yield to OTHER categories, not merely stall on the leak.
+
+    Guards the test above from passing via a degenerate scheduler that returns
+    None or thrashes between two keys: a bounded monopoly is only a fix if the
+    session actually spreads.
+    """
+    conn = db.connect()
+    cats = [f"cat{i}|preflop|jam|10" for i in range(8)]
+    now = NOW
+    served = []
+    for _ in range(60):
+        served.append(_serve_and_answer(conn, cats, now, failing=cats[0]))
+        now += timedelta(minutes=1)
+    assert set(served) == set(cats), f"never served {set(cats) - set(served)}"
