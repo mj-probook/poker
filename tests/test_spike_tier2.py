@@ -1,0 +1,318 @@
+"""Slice I item 3: M4 tier-2 activation via the real Slice-D solver.
+
+An HU-postflop (river) decision from a fixture HH is graded end-to-end through
+a real, small, cached solve — proving the SpotKey → solution_index → solve_io →
+Solution → decision-ε grading path that Slice F left stubbed.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from pokerlab.hh.decisions import extract_decisions
+from pokerlab.hh.persist import drain_batch_queue, persist_session
+from pokerlab.hh.pokerstars import parse_pokerstars
+from pokerlab.hh.population import load_population
+from pokerlab.hh.report import grade_session
+from pokerlab.solver import subgame as sg
+from pokerlab.spike import tier2
+from pokerlab.store import db
+from pokerlab.types import TIER_SOLVER
+
+FIXTURES = Path(__file__).parent / "fixtures" / "hh"
+AT = "2026-07-19T00:00:00"
+FAST_CFG = sg.BetConfig(sizes=(0.75,), jam=False, max_raises=0)
+
+
+def _ante_hu():
+    raw = (FIXTURES / "ps_ante_hu.txt").read_text()
+    return parse_pokerstars(raw), raw
+
+
+def test_river_decision_is_the_oop_root_and_tier2():
+    parsed, _ = _ante_hu()
+    ds = extract_decisions(parsed)
+    river = ds[4]
+    assert river.street == "river" and river.tier == TIER_SOLVER
+    assert river.position == "BB" and len(river.board) == 5  # hero is OOP root
+    assert river.game_state is not None
+
+
+def test_inline_tier2_grades_via_a_real_cached_river_solve():
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+
+    conn = db.connect()
+    key = tier2.cache_solve(conn, river, iters=80, cfg=FAST_CFG)
+    assert key is not None and db.solution_path(conn, key) is not None
+
+    report = grade_session([parsed], population=load_population(),
+                           solution_for=tier2.make_inline_solution_for(conn))
+    gd = next(g for g in report.graded if g.decision.index == 4)
+    assert gd.grading.tier == TIER_SOLVER and gd.grading.graded
+    assert gd.grading.ev_loss is not None            # real solver EV
+    assert gd.grading.chosen == "bet"                # hero bet the river
+    assert gd.grading.best in {"bet", "check"}
+
+
+@pytest.mark.slow
+def test_drain_solver_grades_turn_and_river_end_to_end():
+    parsed, raw = _ante_hu()
+    report = grade_session([parsed], population=load_population())
+    conn = db.connect()
+    persist_session(conn, [parsed], report, graded_at=AT, raw_texts=[raw])
+
+    result = drain_batch_queue(
+        conn, tier2.make_drain_solver(conn, iters=60, cfg=FAST_CFG), graded_at=AT)
+    # turn + river are solvable (OOP hero); flop spots are out of turn/river scope
+    assert result["done"] >= 2
+    tier2_rows = [g for g in db.gradings(conn) if g["tier"] == TIER_SOLVER]
+    assert tier2_rows and all(g["ev_loss"] is not None for g in tier2_rows)
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E28][Q22]: solvable()'s OOP guard was `position != "BTN"`. Heads-up
+# the button is labelled "SB" (position_label returns BTN only for n>=3), so the
+# guard was ALWAYS true HU — an IP hero was solved and graded against the root
+# (OOP) strategy, i.e. against the wrong player's ranges entirely. And
+# cache_solve bypassed the gate completely, so even a correct gate would not
+# have covered that path.
+# --------------------------------------------------------------------------- #
+def _hu_hero_button():
+    raw = (FIXTURES / "ps_hu_hero_button.txt").read_text()
+    return parse_pokerstars(raw), raw
+
+
+def test_hu_button_hero_is_ip_and_not_solvable():
+    parsed, _ = _hu_hero_button()
+    turn = next(d for d in extract_decisions(parsed) if d.street == "turn")
+
+    # the exact shape that fooled the old guard: IP, but not labelled "BTN"
+    assert turn.position != "BTN"
+    assert turn.tier == TIER_SOLVER and len(turn.board) == 4
+    assert not tier2.solvable(turn), "an IP hero must not be solved as the OOP root"
+
+
+def test_oop_hero_is_still_solvable():
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+    assert tier2.solvable(river)
+
+
+def test_cache_solve_gates_on_solvable():
+    """[Q22] cache_solve must not be a second, ungated solve path."""
+    parsed, _ = _hu_hero_button()
+    turn = next(d for d in extract_decisions(parsed) if d.street == "turn")
+
+    conn = db.connect()
+    key = tier2.cache_solve(conn, turn, iters=40, cfg=FAST_CFG)
+
+    assert key is None, "cache_solve solved a spot the gate rejects"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+def test_drain_solver_and_cache_solve_reject_the_same_spots():
+    """[Q22] one gate, one answer — the two entry points cannot diverge.
+
+    DELIBERATE SPEC CHANGE (wave-3, team-lead ruling). This used to assert that
+    BOTH paths return None on a rejected spot. The drain now RAISES
+    `UnsolvableSpot` instead: every reason the gate refuses is structural, so a
+    refusal returned as a "miss" left the row queued forever while the session
+    report kept promising the operator that draining would move it.
+
+    The invariant Q22 actually protects is unchanged and still pinned here —
+    both paths consult the same gate and agree on WHICH spots are refused. Only
+    what each does with a refusal differs, because only one of them has a queue
+    row to close.
+    """
+    parsed, _ = _ante_hu()
+    conn = db.connect()
+    solver = tier2.make_drain_solver(conn, iters=20, cfg=FAST_CFG, persist=False)
+
+    rejected = [d for d in extract_decisions(parsed) if not tier2.solvable(d)]
+    assert rejected, "fixture should contain at least one non-solvable spot"
+    for d in rejected:
+        with pytest.raises(tier2.UnsolvableSpot):
+            solver("k", d)
+        assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
+    assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+def test_a_refused_spot_closes_the_row_as_unsolvable_not_failed():
+    """The distinction has to survive into the STORE, not just the return dict.
+
+    The report is a DB read, so 'unsolvable' (will not change without a solver
+    upgrade) and 'failed' (fix the bug and retry) must be different statuses or
+    the operator gets told a transient cause is permanent.
+    """
+    from pokerlab.hh.persist import drain_batch_queue, persist_session
+    from pokerlab.hh.population import load_population
+    from pokerlab.hh.report import grade_session
+
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    parsed = parse_pokerstars(raw)
+    conn = db.connect()
+    report = grade_session([parsed], population=load_population())
+    persist_session(conn, [parsed], report, graded_at=AT, raw_texts=[raw])
+
+    result = drain_batch_queue(
+        conn, tier2.make_drain_solver(conn, iters=20, cfg=FAST_CFG), graded_at=AT)
+    statuses = {r["status"] for r in db.batch_rows(conn)}
+
+    assert result["unsolvable"] >= 1, "the gate must refuse at least one fixture spot"
+    assert "unsolvable" in statuses
+    assert not [r for r in db.batch_rows(conn)
+                if r["status"] == "pending"], "a structural refusal must not stay queued"
+
+
+def _queued_with(conn, statuses):
+    hid = db.insert_imported_hand(conn, "PokerStars", "r", "{}", AT, "uid-x")
+    for i, st in enumerate(statuses):
+        rid = db.enqueue_batch(conn, "k|flop", hid, i)
+        db.set_batch_status(conn, rid, st)
+
+
+def test_retry_reopens_only_bug_failures_by_default():
+    """Retry is the remedy for 'failed' ALONE.
+
+    A 'mismatched' row re-derives the same wrong spot and re-fails forever, and
+    an 'unsolvable' row needs a solver upgrade first — reopening them by default
+    would collapse the three remedies back into one, which is the conflation the
+    separate statuses exist to prevent.
+    """
+    conn = db.connect()
+    _queued_with(conn, ("failed", "unsolvable", "mismatched"))
+
+    assert db.retry_failed_batch(conn) == 1
+    assert {r["status"] for r in db.batch_rows(conn)} == {
+        "pending", "unsolvable", "mismatched"}
+
+
+def test_the_other_terminal_causes_are_reopenable_explicitly():
+    """Still escape hatches, once their real remedy has been applied."""
+    conn = db.connect()
+    _queued_with(conn, ("failed", "unsolvable", "mismatched"))
+
+    assert db.retry_failed_batch(conn, ("unsolvable", "mismatched")) == 2
+    assert {r["status"] for r in db.batch_rows(conn)} == {"pending", "failed"}
+
+
+def test_retry_rejects_a_non_terminal_status():
+    conn = db.connect()
+    with pytest.raises(ValueError, match="not terminal statuses"):
+        db.retry_failed_batch(conn, ("done",))
+
+
+# --------------------------------------------------------------------------- #
+# Wave-2 [E27]: tier2 built the subgame tree with
+# `stack = max(eff_bb - pot0/2, pot0)`. The clamp INVENTS chips whenever the
+# hero is short relative to the pot — at eff_bb=5, pot0=20 the hero truly has
+# -5bb behind (already committed) and the tree was built with 20bb behind, i.e.
+# a completely different game, graded as if it were the hero's.
+# --------------------------------------------------------------------------- #
+def _decision_with(d, *, eff_bb: float, pot_bb: float):
+    import dataclasses
+    return dataclasses.replace(d, eff_bb=eff_bb, pot_bb=pot_bb)
+
+
+def test_effective_behind_is_not_clamped_upward():
+    parsed, _ = _ante_hu()
+    d = extract_decisions(parsed)[4]
+
+    # comfortably deep: true remaining behind, unchanged
+    deep = _decision_with(d, eff_bb=37.5, pot_bb=5.0)
+    assert tier2.effective_behind_bb(deep) == pytest.approx(35.0)
+
+    # short vs the pot: the TRUE (small) stack, not inflated to the pot size
+    short = _decision_with(d, eff_bb=10.0, pot_bb=12.0)
+    assert tier2.effective_behind_bb(short) == pytest.approx(4.0)
+
+
+def test_hero_with_no_chips_behind_is_not_solvable():
+    parsed, _ = _ante_hu()
+    d = extract_decisions(parsed)[4]
+
+    for eff, pot in [(5.0, 20.0), (2.0, 30.0), (8.0, 16.0)]:
+        broke = _decision_with(d, eff_bb=eff, pot_bb=pot)
+        assert tier2.effective_behind_bb(broke) <= 0.0
+        assert not tier2.solvable(broke), (
+            f"eff_bb={eff} pot={pot}: no chips behind is not a postflop spot")
+
+
+def test_no_chips_behind_writes_no_solve():
+    parsed, _ = _ante_hu()
+    d = _decision_with(extract_decisions(parsed)[4], eff_bb=5.0, pot_bb=20.0)
+    conn = db.connect()
+    assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
+    assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3: `solvable()` gated on POSITION (hero acts first postflop) but the
+# subgame it builds is rooted at "OOP to act, no bet faced". Those are not the
+# same claim. A hero can be OOP and still be at their SECOND action of the
+# street, facing a bet — and the machinery then solved the root node and graded
+# the hero's action against it.
+#
+# The crash is the lucky case (`ValueError: action 'call' not in ['check','jam']`,
+# surfaced by w3-product-builder building pokerlab-batch). The dangerous case is
+# silent: when the hero's action happens to exist in the wrong node's action
+# set, it grades confidently against a decision that never happened.
+# --------------------------------------------------------------------------- #
+def test_a_hero_facing_a_bet_is_not_the_subgame_root():
+    parsed, _ = _ante_hu()
+    ds = extract_decisions(parsed)
+    facing = [d for d in ds if d.tier == TIER_SOLVER and len(d.board) >= 4
+              and d.to_call > 0]
+    for d in facing:
+        assert not tier2.solvable(d), (
+            f"idx={d.index}: hero faces {d.to_call}bb, but the solved tree's root "
+            "offers no call — that spot cannot be graded against this subgame")
+
+
+def test_the_multiway_river_call_is_refused():
+    """The exact spot that crashed the drain: hero's 2nd river action, facing 2000."""
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    d = next(x for x in extract_decisions(parse_pokerstars(raw))
+             if x.street == "river" and x.action_type == "call")
+    assert d.to_call > 0
+    assert not tier2.solvable(d)
+
+
+def test_the_root_spot_on_the_same_street_is_still_solvable():
+    """The fix must not refuse the genuine root: same street, hero acts first."""
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    ds = extract_decisions(parse_pokerstars(raw))
+    root = next(x for x in ds if x.street == "river" and x.to_call == 0
+                and x.tier == TIER_SOLVER)
+    assert tier2.solvable(root), "an unfaced postflop root must stay tier-2"
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 [M4]: tier-2 solves with UNIFORM ranges for both players and a
+# symmetric stack, then emitted an exact ev_loss carrying no record of either
+# assumption. The solve is exact for the game it was handed; the provenance is
+# what says which game that was.
+# --------------------------------------------------------------------------- #
+def test_a_tier2_solution_records_its_range_assumption():
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+    conn = db.connect()
+    key = tier2.cache_solve(conn, river, iters=40, cfg=FAST_CFG)
+    assert key is not None
+
+    sol = tier2.make_inline_solution_for(conn)(river)
+    assert sol is not None
+    assert tier2.RANGE_PROVENANCE in sol.range_ctx, (
+        "an exact ev_loss must carry the assumptions it is exact under")
+
+
+def test_the_provenance_survives_the_label_collapse():
+    """`_collapsed_solution` rewrites actions; it must not drop provenance."""
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+    solver = tier2.solve_decision(river, iters=40, cfg=FAST_CFG)
+    assert solver is not None
+    sol = tier2._hero_solution(river, solver)
+    assert sol is not None and tier2.RANGE_PROVENANCE in sol.range_ctx

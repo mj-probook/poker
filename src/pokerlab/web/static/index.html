@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pokerlab · push/fold drills</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto;
+           padding: 0 1rem; line-height: 1.5; }
+    #description { font-size: 1.4rem; font-weight: 600; }
+    #meta, #tournament { color: #555; }
+    #actions { margin: 1.2rem 0; display: flex; gap: 0.6rem; }
+    #actions button { font-size: 1.1rem; padding: 0.5rem 1.2rem; cursor: pointer; }
+    #feedback { min-height: 3rem; font-size: 1.05rem; }
+    #next { padding: 0.4rem 1rem; }
+    .correct { color: #157f3b; }
+    .incorrect { color: #b3261e; }
+  </style>
+</head>
+<body>
+  <h1>Push/Fold Trainer</h1>
+  <p id="description">Loading…</p>
+  <p id="meta"></p>
+  <p id="tournament"></p>
+  <div id="actions"></div>
+  <p id="feedback"></p>
+  <button id="next">Next spot →</button>
+  <script src="/static/app.js"></script>
+</body>
+</html>

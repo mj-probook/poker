@@ -1,0 +1,24 @@
+PokerStars Hand #240000000009: Tournament #3900000009, $100+$9 USD Hold'em No Limit - Level XII (200/400) - 2024/03/06 12:00:00 ET
+Table '3900000009 9' 9-max Seat #4 is the button
+Seat 1: Hero (10000 in chips)
+Seat 2: VillainA (12000 in chips)
+Seat 5: VillainB (8000 in chips)
+VillainB: posts small blind 200
+Hero: posts big blind 400
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+VillainA: raises 500 to 900
+VillainB: folds
+Hero: calls 500
+*** FLOP *** [7c 3d 2s]
+Hero: checks
+VillainA: bets 800
+Hero: folds
+Uncalled bet (800) returned to VillainA
+VillainA collected 2000 from pot
+*** SUMMARY ***
+Total pot 2000 | Rake 0
+Board [7c 3d 2s]
+Seat 1: Hero (big blind) folded on the Flop
+Seat 2: VillainA collected (2000)
+Seat 5: VillainB (small blind) folded before Flop

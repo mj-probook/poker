@@ -1,0 +1,28 @@
+PokerStars Hand #240000000003: Tournament #3900000003, $50+$5 USD Hold'em No Limit - Level X (100/200) - 2024/03/03 22:30:00 ET
+Table '3900000003 1' 6-max Seat #3 is the button
+Seat 1: Hero (3000 in chips)
+Seat 2: Villain2 (1000 in chips)
+Seat 3: Villain3 (5000 in chips)
+Hero: posts small blind 100
+Villain2: posts big blind 200
+*** HOLE CARDS ***
+Dealt to Hero [Kh Kd]
+Villain3: raises 4800 to 5000 and is all-in
+Hero: calls 2900 and is all-in
+Villain2: calls 800 and is all-in
+Uncalled bet (2000) returned to Villain3
+*** FLOP *** [2c 7d 9s]
+*** TURN *** [2c 7d 9s] [Jc]
+*** RIVER *** [2c 7d 9s Jc] [4h]
+*** SHOW DOWN ***
+Villain2: shows [Ah Ad] (a pair of Aces)
+Villain3: shows [Qh Qd] (a pair of Queens)
+Hero: shows [Kh Kd] (a pair of Kings)
+Villain2 collected 3000 from main pot
+Hero collected 4000 from side pot
+*** SUMMARY ***
+Total pot 7000 Main pot 3000. Side pot 4000. | Rake 0
+Board [2c 7d 9s Jc 4h]
+Seat 1: Hero (small blind) showed [Kh Kd] and won (4000) with a pair of Kings
+Seat 2: Villain2 (big blind) showed [Ah Ad] and won (3000) with a pair of Aces
+Seat 3: Villain3 (button) showed [Qh Qd] and lost with a pair of Queens

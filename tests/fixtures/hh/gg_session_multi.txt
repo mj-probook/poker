@@ -1,0 +1,41 @@
+Poker Hand #TM4400000002: Tournament #144000002, Bounty Hunters Special $10.50 Hold'em No Limit - Level12(200/400) - 2024/03/05 15:03:47
+Table '7' 9-max Seat #2 is the button
+Seat 1: b9c8d7e6 (6000 in chips)
+Seat 2: Hero (6000 in chips)
+b9c8d7e6: posts the ante 50
+Hero: posts the ante 50
+Hero: posts small blind 200
+b9c8d7e6: posts big blind 400
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Hero: raises 5750 to 5950 and is all-in
+b9c8d7e6: calls 5550 and is all-in
+*** FLOP *** [Ac 9s 4d]
+*** TURN *** [Ac 9s 4d] [2h]
+*** RIVER *** [Ac 9s 4d 2h] [3c]
+*** SHOWDOWN ***
+Hero: shows [Ah Kd] (a pair of Aces)
+b9c8d7e6: shows [7c 7d] (a pair of Sevens)
+Hero collected 12000 from pot
+*** SUMMARY ***
+Total pot 12000 | Rake 0 | Jackpot 0 | Bingo 0
+Board [Ac 9s 4d 2h 3c]
+Seat 1: b9c8d7e6 (big blind) showed [7c 7d] and lost with a pair of Sevens
+Seat 2: Hero (button) showed [Ah Kd] and won (12000) with a pair of Aces
+Poker Hand #TM4400000009: Tournament #144000009, Bounty Hunters Special $10.50 Hold'em No Limit - Level16(200/400) - 2024/03/05 18:00:00
+Table '3' 9-max Seat #1 is the button
+Seat 1: a1b2c3d4 (12000 in chips)
+Seat 2: e5f6g7h8 (9000 in chips)
+Seat 3: Hero (15000 in chips)
+Hero: posts big blind ante 400
+e5f6g7h8: posts small blind 200
+Hero: posts big blind 400
+*** HOLE CARDS ***
+Dealt to Hero [Qh Qd]
+a1b2c3d4: folds
+e5f6g7h8: folds
+Uncalled bet (200) returned to Hero
+Hero collected 800 from pot
+*** SUMMARY ***
+Total pot 800 | Rake 0 | Jackpot 0 | Bingo 0
+Seat 3: Hero (big blind) collected (800)

@@ -1,0 +1,80 @@
+PokerStars Hand #240000000001: Tournament #3900000001, $10+$1 USD Hold'em No Limit - Level V (50/100) - 2024/03/01 20:15:00 ET
+Table '3900000001 7' 6-max Seat #6 is the button
+Seat 1: Villain1 (5000 in chips)
+Seat 2: Hero (5000 in chips)
+Seat 3: Villain3 (5000 in chips)
+Seat 4: Villain4 (5000 in chips)
+Seat 5: Villain5 (5000 in chips)
+Seat 6: Villain6 (5000 in chips)
+Villain1: posts the ante 10
+Hero: posts the ante 10
+Villain3: posts the ante 10
+Villain4: posts the ante 10
+Villain5: posts the ante 10
+Villain6: posts the ante 10
+Villain1: posts small blind 50
+Hero: posts big blind 100
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Villain3: folds
+Villain4: folds
+Villain5: raises 150 to 250
+Villain6: folds
+Villain1: folds
+Hero: folds
+Uncalled bet (150) returned to Villain5
+Villain5 collected 310 from pot
+*** SUMMARY ***
+Total pot 310 | Rake 0
+Seat 1: Villain1 (small blind) folded before Flop
+Seat 2: Hero (big blind) folded before Flop
+Seat 3: Villain3 folded before Flop (didn't bet)
+Seat 4: Villain4 folded before Flop (didn't bet)
+Seat 5: Villain5 collected (310)
+Seat 6: Villain6 (button) folded before Flop (didn't bet)
+PokerStars Hand #BROKEN: Tournament, Hold em No Limit - Level X (100/200)
+this chunk has a malformed header and no body
+
+PokerStars Hand #240000000002: Tournament #3900000002, $20+$2 USD Hold'em No Limit - Level VIII (100/200) - 2024/03/02 21:00:00 ET
+Table '3900000002 3' 6-max Seat #6 is the button
+Seat 1: Villain1 (5000 in chips)
+Seat 2: Villain2 (5000 in chips)
+Seat 3: Hero (5000 in chips)
+Seat 4: Villain4 (5000 in chips)
+Seat 5: Villain5 (5000 in chips)
+Seat 6: Villain6 (5000 in chips)
+Villain1: posts small blind 100
+Villain2: posts big blind 200
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kc]
+Hero: raises 400 to 600
+Villain4: folds
+Villain5: calls 600
+Villain6: folds
+Villain1: folds
+Villain2: calls 400
+*** FLOP *** [Kh 7c 2d]
+Villain2: checks
+Hero: bets 800
+Villain5: calls 800
+Villain2: folds
+*** TURN *** [Kh 7c 2d] [Ts]
+Hero: bets 1400
+Villain5: calls 1400
+*** RIVER *** [Kh 7c 2d Ts] [3h]
+Hero: checks
+Villain5: bets 2000
+Hero: calls 2000
+*** SHOW DOWN ***
+Villain5: shows [Qd Qs] (a pair of Queens)
+Hero: shows [Ah Kc] (a pair of Kings)
+Hero collected 10300 from pot
+*** SUMMARY ***
+Total pot 10300 | Rake 0
+Board [Kh 7c 2d Ts 3h]
+Seat 1: Villain1 (small blind) folded before Flop
+Seat 2: Villain2 (big blind) folded on the Flop
+Seat 3: Hero won (10300)
+Seat 4: Villain4 folded before Flop (didn't bet)
+Seat 5: Villain5 showed [Qd Qs] and lost with a pair of Queens
+Seat 6: Villain6 (button) folded before Flop (didn't bet)

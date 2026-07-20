@@ -21,6 +21,11 @@ dependencies = [
     "uvicorn[standard]>=0.51.0",
 ]
 
+[project.scripts]
+pokerlab-web = "pokerlab.web.app:main"
+pokerlab-import = "pokerlab.cli:main_import"
+pokerlab-batch = "pokerlab.cli:main_batch"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -m 'not slow and not bench'"
@@ -33,3 +38,8 @@ markers = [
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest-xdist>=3.8.0",
+]

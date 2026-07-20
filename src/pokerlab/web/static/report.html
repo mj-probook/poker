@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pokerlab · session report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 3rem auto;
+           padding: 0 1rem; line-height: 1.5; }
+    h2 { margin-top: 2.2rem; font-size: 1.15rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #e3e3e3; }
+    th { font-weight: 600; color: #555; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .banner { padding: 0.6rem 0.9rem; border-radius: 4px; margin: 1rem 0; }
+    .partial { background: #fff4e0; border: 1px solid #e0b568; }
+    /* Terminal causes read as standing facts, not as in-flight work — the
+       distinction the operator has to act on differently. */
+    .blocked { background: #f4f4f6; border: 1px solid #ccc; margin: 0.4rem 0; }
+    /* Ungraded hands are a data-loss claim, not a status line — styled to be
+       the thing you cannot miss, since `partial` may legitimately read false
+       while these exist. */
+    .failed { background: #fdeceb; border: 1px solid #d08b86; margin: 0.6rem 0; }
+    .failed ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    .failed li { font-size: 0.92rem; color: #6a2b27; }
+    /* Tier labels are load-bearing UI (plan §9), so the approximate section is
+       styled as a distinct claim rather than as more rows of the same table. */
+    .tier-label { font-weight: 600; color: #7a4d00; }
+    /* A tier-2 row's reference disclosure. Marked but not alarmed: the solve
+       is exact for the inputs it got, so this is a scope note, not a warning
+       (round-4 [1]). Styled distinctly from .approx-free rows so the mixed
+       case is visible at a glance without reading the count. */
+    td.approx-cell { color: #7a4d00; }
+    p.approx { font-size: 0.92rem; color: #555; margin-top: 0.6rem; }
+    p.approx code { color: #7a4d00; }
+    .approx { background: #fbfbf5; border-left: 3px solid #c9ad63; padding-left: 0.8rem; }
+    .empty { color: #777; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Session report</h1>
+  <p><a href="/">← back to drills</a></p>
+
+  <div id="summary"></div>
+
+  <h2>Top leaks by EV-loss/100 <small>(exact tiers only)</small></h2>
+  <div id="leaks"></div>
+
+  <h2>Multiway deviations</h2>
+  <div id="tier3" class="approx"></div>
+
+  <h2>Skill gates</h2>
+  <div id="gates"></div>
+
+  <script src="/static/report.js"></script>
+</body>
+</html>

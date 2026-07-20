@@ -1,0 +1,34 @@
+PokerStars Hand #240000000001: Tournament #3900000001, $10+$1 USD Hold'em No Limit - Level V (50/100) - 2024/03/01 20:15:00 ET
+Table '3900000001 7' 6-max Seat #6 is the button
+Seat 1: Villain1 (5000 in chips)
+Seat 2: Hero (5000 in chips)
+Seat 3: Villain3 (5000 in chips)
+Seat 4: Villain4 (5000 in chips)
+Seat 5: Villain5 (5000 in chips)
+Seat 6: Villain6 (5000 in chips)
+Villain1: posts the ante 10
+Hero: posts the ante 10
+Villain3: posts the ante 10
+Villain4: posts the ante 10
+Villain5: posts the ante 10
+Villain6: posts the ante 10
+Villain1: posts small blind 50
+Hero: posts big blind 100
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Villain3: folds
+Villain4: folds
+Villain5: raises 150 to 250
+Villain6: folds
+Villain1: folds
+Hero: folds
+Uncalled bet (150) returned to Villain5
+Villain5 collected 310 from pot
+*** SUMMARY ***
+Total pot 310 | Rake 0
+Seat 1: Villain1 (small blind) folded before Flop
+Seat 2: Hero (big blind) folded before Flop
+Seat 3: Villain3 folded before Flop (didn't bet)
+Seat 4: Villain4 folded before Flop (didn't bet)
+Seat 5: Villain5 collected (310)
+Seat 6: Villain6 (button) folded before Flop (didn't bet)

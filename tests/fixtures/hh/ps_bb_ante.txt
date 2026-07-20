@@ -1,0 +1,23 @@
+PokerStars Hand #240000000010: Tournament #3900000010, $100+$9 USD Hold'em No Limit - Level XX (300/600) - 2024/03/06 13:00:00 ET
+Table '3900000010 6' 6-max Seat #1 is the button
+Seat 1: VillainA (20000 in chips)
+Seat 2: VillainB (18000 in chips)
+Seat 3: Hero (25000 in chips)
+Seat 4: VillainC (22000 in chips)
+Seat 5: VillainD (15000 in chips)
+Seat 6: VillainE (30000 in chips)
+Hero: posts the ante 600
+VillainB: posts small blind 300
+Hero: posts big blind 600
+*** HOLE CARDS ***
+Dealt to Hero [As Ks]
+VillainC: folds
+VillainD: folds
+VillainE: folds
+VillainA: folds
+VillainB: folds
+Uncalled bet (300) returned to Hero
+Hero collected 1200 from pot
+*** SUMMARY ***
+Total pot 1200 | Rake 0
+Seat 3: Hero (big blind) collected (1200)

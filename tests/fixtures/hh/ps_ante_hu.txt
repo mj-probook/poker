@@ -1,0 +1,31 @@
+PokerStars Hand #240000000004: Tournament #3900000004, $100+$9 USD Hold'em No Limit - Level XV (300/600) - 2024/03/04 23:45:00 ET
+Table '3900000004 2' 2-max Seat #2 is the button
+Seat 1: Hero (30000 in chips)
+Seat 2: Villain2 (30000 in chips)
+Hero: posts the ante 75
+Villain2: posts the ante 75
+Villain2: posts small blind 300
+Hero: posts big blind 600
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kc]
+Villain2: raises 900 to 1500
+Hero: calls 900
+*** FLOP *** [Ts 9s 2c]
+Hero: checks
+Villain2: bets 1800
+Hero: calls 1800
+*** TURN *** [Ts 9s 2c] [Kd]
+Hero: checks
+Villain2: checks
+*** RIVER *** [Ts 9s 2c Kd] [7h]
+Hero: bets 3000
+Villain2: calls 3000
+*** SHOW DOWN ***
+Hero: shows [Ah Kc] (a pair of Kings)
+Villain2: shows [Td Jc] (a pair of Tens)
+Hero collected 12750 from pot
+*** SUMMARY ***
+Total pot 12750 | Rake 0
+Board [Ts 9s 2c Kd 7h]
+Seat 1: Hero (big blind) showed [Ah Kc] and won (12750) with a pair of Kings
+Seat 2: Villain2 (button) showed [Qc Jd] and lost with high card King

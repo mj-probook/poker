@@ -57,7 +57,7 @@ class SpotKey:
 
     formation: str  # e.g. "BTNopen_BBcall"
     stack_bucket: int  # effective bb bucketed to one of 10/20/40/100
-    board_bucket: str  # f"{iso_class}:{texture}", texture from 8-way taxonomy
+    board_bucket: str  # f"{iso_class}:{texture}", texture from the 8-way taxonomy in solver/texture.py
 
 
 @dataclass(frozen=True)

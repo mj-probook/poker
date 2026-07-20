@@ -1,0 +1,197 @@
+"""Hero decision extraction from a parsed hand (Slice F, impl doc §3).
+
+Also owns `reconcile()`: replay-vs-stated validation (engine final stacks and
+pot against the HH SUMMARY) — the gate that decides whether a hand is gradable
+or lands in `SessionReport.failed_hands`.
+
+Replays a `ParsedHand` through the Slice-A engine and snapshots the game state
+at every point where the hero is to act. Each `Decision` carries exactly what
+the tier router and the graders need: street, players-in-pot, effective stack,
+pot, the hero's hole/board, the legal set, and the chosen action — plus the
+routed tier and the raw `formation`/`street`/`action_type` fields the grader
+turns into a canonical `leak_key` category (see `drills.categories`).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import dataclasses
+
+from pokerlab.engine.cards import card_rank, card_suit
+from pokerlab.engine.state import Hand
+from pokerlab.hh.model import ParsedHand
+from pokerlab.hh.tiers import route_tier
+from pokerlab.types import Action, GameState, STREETS, TournamentContext
+
+_RANK_CHAR = {14: "A", 13: "K", 12: "Q", 11: "J", 10: "T",
+              9: "9", 8: "8", 7: "7", 6: "6", 5: "5", 4: "4", 3: "3", 2: "2"}
+
+
+def hand_label(hole: tuple[int, int]) -> str:
+    """Two engine Card ints -> a 169-class label ('AA', 'AKs', 'AKo')."""
+    c1, c2 = hole
+    r1, r2 = card_rank(c1), card_rank(c2)
+    hi, lo = max(r1, r2), min(r1, r2)
+    if r1 == r2:
+        return _RANK_CHAR[hi] + _RANK_CHAR[hi]
+    suited = "s" if card_suit(c1) == card_suit(c2) else "o"
+    return _RANK_CHAR[hi] + _RANK_CHAR[lo] + suited
+
+
+def position_label(n: int, button: int, seat: int) -> str:
+    """Positional label for a seat given table size and button (engine indices)."""
+    if n == 2:
+        return "SB" if seat == button else "BB"  # HU: button posts the SB
+    sb, bb = (button + 1) % n, (button + 2) % n
+    if seat == sb:
+        return "SB"
+    if seat == bb:
+        return "BB"
+    if seat == button:
+        return "BTN"
+    dist = (button - seat) % n  # 1 = right of button = CO, ...
+    return {1: "CO", 2: "HJ", 3: "LJ", 4: "MP", 5: "UTG"}.get(dist, f"EP{dist}")
+
+
+@dataclass
+class Decision:
+    index: int              # 0-based order within the hero's own decisions
+    street: str
+    seat: int               # hero engine index
+    position: str
+    num_in_pot: int         # non-folded players at decision time (2 == heads-up)
+    pot: int                # chips in the pot before the action
+    pot_bb: float
+    eff_bb: float           # effective (smallest live) starting stack, in bb
+    ante_bb: float          # per-player ante as a fraction of a big blind
+    to_call: int
+    opp_allin: bool         # a live opponent is already all-in (hero faces a jam)
+    hole: tuple[int, int]
+    board: tuple[int, ...]
+    legal: list[Action]
+    chosen: Action
+    is_allin: bool          # the chosen action commits the hero's whole stack
+    tier: int
+    formation: str
+    action_type: str
+    # Frozen GameState snapshot at the decision (tournament context attached),
+    # so downstream (tier-2 solver / SpotKey) is self-contained. Optional so a
+    # Decision can still be hand-built in tests without a full engine state.
+    game_state: GameState | None = None
+    # The persisted leak_key is the canonical category (drills.categories),
+    # assigned by the grader — jam/fold spots gain a depth bucket, so it is not
+    # a pure function of these raw fields (see hh.grade).
+
+
+def _ante_bb(parsed: ParsedHand, n: int, bb: int) -> float:
+    """Per-player-equivalent ante in bb — what the jam/fold chart models.
+
+    The chart's `ante` is dead money contributed *per player*, so a big-blind
+    ante (one payment of `bb_ante` for the whole table) is the same dead money
+    as a per-player ante of `bb_ante / n` (round-1 finding [12]).
+    """
+    if parsed.setup.bb_ante:
+        return parsed.setup.bb_ante / (n * bb)
+    return parsed.setup.ante / bb
+
+
+def _action_type(chosen: Action, is_allin: bool) -> str:
+    label, _ = chosen
+    if label == "fold":
+        return "fold"
+    if is_allin and label in ("bet", "raise", "allin"):
+        return "jam"
+    return label
+
+
+def extract_decisions(parsed: ParsedHand) -> list[Decision]:
+    hand = Hand(parsed.setup)
+    n = hand.n
+    bb = parsed.setup.bb
+    hero = parsed.hero
+    tc = TournamentContext(
+        payouts=(0,),
+        players_remaining=n,
+        stacks_all=tuple(parsed.setup.stacks),
+        bb=bb,
+        ante=parsed.setup.ante,
+    )
+    out: list[Decision] = []
+    k = 0
+    for seat, action in parsed.actions:
+        if hand.to_act == seat == hero:
+            street = STREETS[hand.street_idx]
+            num_in_pot = sum(not f for f in hand.folded)
+            max_to = hand.street_bet[hero] + hand.stack_left[hero]
+            label, amount = action
+            is_allin = label in ("bet", "raise", "allin") and amount >= max_to
+            if label == "call" and hand.current_bet >= max_to:
+                is_allin = True  # calling commits the hero's whole stack
+            eff_bb = min(
+                parsed.setup.stacks[i] for i in range(n) if not hand.folded[i]
+            ) / bb
+            atype = _action_type(action, is_allin)
+            out.append(Decision(
+                index=k,
+                street=street,
+                seat=hero,
+                position=position_label(n, hand.button, hero),
+                num_in_pot=num_in_pot,
+                pot=hand.pot,
+                pot_bb=hand.pot / bb,
+                eff_bb=eff_bb,
+                ante_bb=_ante_bb(parsed, n, bb),
+                to_call=hand.current_bet - hand.street_bet[hero],
+                opp_allin=any(
+                    hand.allin[i] and not hand.folded[i]
+                    for i in range(n) if i != hero
+                ),
+                hole=parsed.setup.hole[hero],  # type: ignore[arg-type]
+                board=tuple(hand._visible_board()),
+                legal=hand.legal_actions(),
+                chosen=action,
+                is_allin=is_allin,
+                tier=route_tier(street, num_in_pot),
+                formation=f"{n}max:{position_label(n, hand.button, hero)}",
+                action_type=atype,
+                game_state=dataclasses.replace(hand.game_state, tournament=tc),
+            ))
+            k += 1
+        # Seat guard (round-1 finding [14]): the engine applies an action to
+        # whoever is to act, so a desynced action list would be silently
+        # MISATTRIBUTED — the hero graded on someone else's decision. Refuse.
+        if hand.to_act != seat:
+            raise ValueError(
+                f"action list desynced: hand.to_act={hand.to_act} but the "
+                f"history's next action is seat {seat} ({action!r})")
+        hand.apply(action)
+    return out
+
+
+def reconcile(parsed: ParsedHand) -> None:
+    """Verify a replay against the result the history itself states.
+
+    The engine independently recomputes side pots, uncalled returns and the
+    showdown split; if that disagrees with the HH's own SUMMARY the hand is not
+    understood and must not be graded (round-1 finding [13]). Raises ValueError
+    on any mismatch — callers isolate it per hand (see `hh.report`).
+    """
+    hand = Hand(parsed.setup)
+    for seat, action in parsed.actions:
+        if hand.to_act != seat:
+            raise ValueError(
+                f"action list desynced: hand.to_act={hand.to_act} but the "
+                f"history's next action is seat {seat} ({action!r})")
+        hand.apply(action)
+    if not hand.is_terminal():
+        raise ValueError("reconciliation failed: replay did not reach a terminal state")
+    final = tuple(hand.final_stacks())
+    stated = parsed.stated_final_stacks()
+    if final != stated:
+        raise ValueError(
+            f"reconciliation failed: engine final stacks {final} != stated {stated}")
+    pot = sum(hand.contrib) - parsed.uncalled
+    if pot != parsed.total_pot:
+        raise ValueError(
+            f"reconciliation failed: engine pot {pot} != stated {parsed.total_pot}")
