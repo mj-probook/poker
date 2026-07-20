@@ -1,8 +1,12 @@
 """[R4-a] ICM calibration falsification probe across LADDER SHAPES.
 
-Claim under test (src/pokerlab/drills/scoring.py:50-56):
+Claim under test (src/pokerlab/drills/scoring.py:50-71, the "Calibration
+check" paragraph of `epsilon_for`):
   within-eps rate chip-EV 12.3% vs ICM 1.8% is NOT mis-scaling but a LOW-TAIL
   effect -- chip p10 0.78x (charts genuinely mix) vs ICM p10 1.83x (near-pure).
+Outcome: the low-tail MECHANISM held on four ladders, but the sentence's
+implied generalization did not -- sharpness tracks ladder steepness, not ICM.
+The docstring now says so, which is why the span above grew ([R4-11]).
 Falsifier: if the low-tail explanation is fixture-specific, ICM p10 should move
 a lot across ladder shapes, or the 1.8% should not track solve purity.
 """
