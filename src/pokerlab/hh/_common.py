@@ -241,6 +241,14 @@ def split_hands(text: str, boundary: str) -> list[str]:
         return [text]
     bounds = ([0] if starts[0] != 0 else []) + starts + [len(text)]
     chunks = [text[a:b] for a, b in zip(bounds, bounds[1:])]
+    # A whitespace-only leading chunk is MERGED FORWARD, not dropped. Dropping
+    # it silently lost those bytes, so a file with a leading blank line failed
+    # the byte-faithfulness contract above and its pre-split failure row could
+    # not clear. Merging keeps the bytes without manufacturing a junk chunk
+    # that would fail to parse and record a failed hand made of whitespace.
+    if len(chunks) > 1 and not chunks[0].strip():
+        chunks[1] = chunks[0] + chunks[1]
+        chunks = chunks[1:]
     return [c for c in chunks if c.strip()]
 
 

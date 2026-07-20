@@ -296,3 +296,72 @@ def test_a_failure_recorded_before_splitting_still_clears(tmp_path):
     assert remaining == 0, (
         "a pre-split failure row survived a successful re-import — the report "
         "will claim forever that this hand is broken")
+
+
+# --------------------------------------------------------------------------- #
+# CHUNK BOUNDARY PIN (round-4, clear-key seam).
+#
+# `failed_hands` is keyed on the stored raw text, and after [R2'] that text is a
+# CHUNK. So a recorded failure clears on re-import only if this splitter cuts
+# the file at exactly the same places it did when the row was written. A future
+# refactor that moves a boundary — attaching a blank separator line to the
+# previous chunk instead of the next, say — silently orphans every failure row
+# ever recorded, and the report resumes claiming hands are broken that now
+# import fine.
+#
+# Byte-faithfulness (above) does NOT cover this: it constrains the JOIN, not
+# where the cuts fall. Two splitters can both reassemble the input exactly while
+# disagreeing about which chunk owns a blank line. These are separate
+# properties and each needs its own pin.
+#
+# This freezes boundary placement deliberately. That is the cost of option 3 and
+# the reason it is a real option rather than a hope: changing these digests is
+# allowed, but it is a change to PERSISTED DATA, not an implementation detail,
+# and it requires migrating or clearing existing failed_hands rows first.
+# --------------------------------------------------------------------------- #
+def _digests(name: str) -> list[str]:
+    import hashlib
+
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    return [hashlib.sha256(c.encode()).hexdigest()[:16]
+            for c in split_pokerstars(_read(name))]
+
+
+def test_chunk_boundaries_are_pinned_for_the_session_fixtures():
+    """If this fails, you moved a chunk boundary — migrate failed_hands first."""
+    assert _digests("ps_session_multi.txt") == [
+        "33e48c307487da0f", "74facc0187791353", "76be309cd1d1bcac",
+    ]
+
+
+def test_boundary_placement_is_stable_against_blank_line_variation():
+    """The concrete refactor the pin exists to catch, stated as behaviour.
+
+    Digests alone say "something changed" without saying what matters. This
+    names the invariant: a hand's chunk starts AT its header line and owns the
+    separator that follows it, so blank lines between hands belong to the
+    PRECEDING hand's chunk. Pinning the rule as well as the hashes means a
+    future maintainer can tell whether a digest change is the bug or a
+    deliberate migration.
+    """
+    from pokerlab.hh.pokerstars import BOUNDARY, split_pokerstars
+
+    chunks = split_pokerstars(_read("ps_session_multi.txt"))
+    for c in chunks:
+        assert c.startswith(BOUNDARY), "a chunk does not begin at its header"
+    # every chunk but the last carries its own trailing separator
+    assert all(c.endswith("\n") for c in chunks[:-1])
+
+
+def test_leading_blank_lines_do_not_lose_bytes():
+    """Regression: a whitespace-only leading chunk used to be dropped.
+
+    That silently violated byte-faithfulness for any file beginning with a
+    blank line, so its pre-split failure row could never clear — the same
+    defect as the trailing newline, one edge over.
+    """
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    raw = "\n\n" + _read("ps_preflop_fold.txt")
+    assert "".join(split_pokerstars(raw)) == raw
