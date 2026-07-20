@@ -185,3 +185,62 @@ def test_numpy_exploitability_matches_an_independent_tree_walk():
 
     independent = nash_conv(tree, profile) / 2.0      # -> per-player gap
     assert abs(independent - expl_np) / expl_np < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 findings [C1][C2][C3][C4]: the chart entry points are answer keys, so
+# every degenerate input must fail loudly. Wave 2 closed four such holes; these
+# are the ones that survived it.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("stacks,seat", [((1000, 0, 1000, 1000), "bb_seat"),
+                                         ((0, 1000, 1000, 1000), "sb_seat")])
+def test_icm_rejects_a_blind_seat_with_no_chips(stacks, seat):
+    """[C1] the chip path refused depth 0; the ICM path served a uniform chart.
+
+    With a 0-chip blind the effective depth is 0, every hand is equivalent, and
+    the solve certifies itself at ~5e-9 -- AA and 32o came back identical. The
+    asymmetry was the tell: solve_jamfold(0.0) already raised.
+    """
+    with pytest.raises(ValueError, match="no chips"):
+        solve_jamfold_icm(stacks, 0, 1, _PAYOUTS, _BB_CHIPS)
+    with pytest.raises(ValueError):          # the chip path, for contrast
+        solve_jamfold(0.0)
+
+
+@pytest.mark.parametrize("stacks", [[float("inf"), 100, 100],
+                                    [float("nan"), 100, 100]])
+def test_icm_equities_rejects_non_finite_stacks(stacks):
+    """[C2] `s >= 0` did not express the intent: `inf >= 0` is True, and an
+    infinite stack turns stack/total into a NaN that spreads silently."""
+    with pytest.raises(AssertionError, match="finite"):
+        icm_equities(stacks, [500, 300])
+
+
+@pytest.mark.parametrize("payouts", [[500, -300], [float("inf"), 300],
+                                     [500, float("nan")]])
+def test_icm_equities_rejects_bad_ladders(payouts):
+    with pytest.raises(AssertionError, match="payouts"):
+        icm_equities([100, 100, 100], payouts)
+
+
+@pytest.mark.parametrize("ante", [float("nan"), float("inf"), -0.5])
+def test_non_finite_or_negative_ante_is_rejected(ante):
+    """[C4] the ante enters the payoffs like the depth does: NaN poisons every
+    payoff, and a negative ante removes chips from the pot."""
+    with pytest.raises(ValueError, match="ante"):
+        jamfold_range("SB", 10.0, ante)
+    with pytest.raises(ValueError, match="ante"):
+        solve_jamfold_icm((1000,) * 4, 0, 1, _PAYOUTS, _BB_CHIPS, ante)
+
+
+def test_exploitability_normalizes_by_reachable_prizes_only():
+    """[C3] ICM pays min(#payouts, #players) places; counting unreachable
+    prizes inflates the denominator and deflates the guard (1.15x measured)."""
+    stacks = (1000, 1000, 1000)                     # 3 players...
+    ladder = (500, 300, 200, 100, 50)               # ...5-place ladder
+    sol = solve_jamfold_icm(stacks, 0, 1, ladder, _BB_CHIPS)
+    reachable = float(sum(ladder[:len(stacks)]))
+    raw = sol.exploitability * reachable
+    # normalizing by the FULL ladder would report a 1.15x smaller gap
+    assert sol.exploitability == pytest.approx(raw / reachable, rel=1e-12)
+    assert sol.exploitability > raw / float(sum(ladder))

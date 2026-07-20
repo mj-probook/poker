@@ -14,6 +14,7 @@ unit (the returned equities are in the payout unit). Places paid = min(#payouts,
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 
@@ -31,7 +32,17 @@ def icm_equities(stacks: Sequence[float], payouts: Sequence[float]) -> list[floa
     # subtracted a blind/ante a seat could not actually pay. Left unguarded the
     # recursion happily returns negative $ equity (round-2 finding [E36]), which
     # is nonsense that then propagates silently into an answer key.
-    assert all(s >= 0.0 for s in stacks), f"negative stack in ICM input: {stacks}"
+    #
+    # `s >= 0.0` alone does NOT express that intent (round-3 finding [C2]):
+    # `inf >= 0.0` is True, and an infinite stack makes `stacks[p] / total` a
+    # NaN that spreads through the whole equity vector without ever tripping an
+    # assert. NaN fails the comparison and is rejected here too.
+    assert all(math.isfinite(s) and s >= 0.0 for s in stacks), (
+        f"stacks must be finite and non-negative, got {stacks}")
+    # Prizes are money: negative or non-finite entries are not a ladder, and an
+    # empty/zero ladder makes every ICM delta 0 (round-2 finding [E34]).
+    assert all(math.isfinite(p) and p >= 0.0 for p in payouts), (
+        f"payouts must be finite and non-negative, got {list(payouts)}")
     # Can't pay more places than there are players.
     payouts = [float(p) for p in payouts[:n]]
 

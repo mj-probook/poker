@@ -113,6 +113,18 @@ def _validate_depth(depth_bb: float) -> None:
             "non-positive depth inverts the chart rather than failing")
 
 
+def _validate_ante(ante: float) -> None:
+    """The ante is dead money added to the pot; it cannot be negative or NaN.
+
+    Validated beside the depth (round-3 finding [C4]) because it enters the
+    payoff arithmetic exactly like the depth does: NaN silently poisons every
+    payoff to NaN, and a negative ante *removes* chips from the pot, quietly
+    reshaping the chart instead of failing.
+    """
+    if not math.isfinite(ante) or ante < 0.0:
+        raise ValueError(f"ante must be finite and non-negative, got {ante!r}")
+
+
 def _validate_payouts(payouts: Sequence[float]) -> None:
     if not len(payouts):
         raise ValueError("ICM needs a non-empty prize ladder")
@@ -141,6 +153,17 @@ def _validate_icm_inputs(stacks: Sequence[float], sb_seat: int, bb_seat: int,
         raise ValueError(f"stacks must be finite and non-negative, got {list(stacks)!r}")
     if not (math.isfinite(bb_chips) and bb_chips > 0):
         raise ValueError(f"bb_chips must be finite and positive, got {bb_chips!r}")
+    # A blind seat with no chips makes the effective depth 0, i.e. there is no
+    # game: every hand is equivalent and the solve returns a uniform chart that
+    # certifies itself at ~5e-9 exploitability (round-3 finding [C1] measured
+    # AA and 32o identical). The chip path already refuses this via
+    # _validate_depth(0.0); the ICM path derived depth only AFTER solving, so
+    # it served the degenerate chart instead. Same refusal, same reason.
+    for label, seat in (("sb_seat", sb_seat), ("bb_seat", bb_seat)):
+        if stacks[seat] <= 0.0:
+            raise ValueError(
+                f"{label} {seat} has no chips ({stacks[seat]}): effective depth "
+                "would be 0, which is not a playable push/fold spot")
 
 
 def icm_model(
@@ -161,6 +184,7 @@ def icm_model(
     """
     stacks = [float(x) for x in stacks_chips]
     _validate_icm_inputs(stacks, sb_seat, bb_seat, payouts, bb_chips)
+    _validate_ante(ante)
     base = icm_equities(stacks, payouts)
     eff = min(stacks[sb_seat], stacks[bb_seat])  # matched all-in size (chips)
     a_ch = ante * bb_chips
@@ -309,6 +333,7 @@ def solve_jamfold(depth_bb: float, ante: float = 0.0,
                   iters: int = 1500) -> JamFoldSolution:
     """Solve the chip-EV HU push/fold game at a given depth (cached)."""
     _validate_depth(depth_bb)
+    _validate_ante(ante)
     em = load_equity_matrix()
     E = em.equity_matrix
     P = joint_prior()
@@ -356,7 +381,12 @@ def solve_jamfold_icm(
     # $5/$3/$2 fixture passed a <1e-4 bar at 2.6e-5 while the identical solve on
     # a realistic cents ladder measured 2.6e-3 and failed it. Dividing by the
     # pool makes the number dimensionless and the guard scale-invariant.
-    pool = float(sum(payouts))
+    # Normalize by the REACHABLE prize pool (round-3 finding [C3]). ICM can only
+    # pay min(#payouts, #players) places — icm_equities truncates the ladder the
+    # same way — so counting unreachable prizes inflates the denominator and
+    # silently deflates the guard (measured 1.15x on a ladder with more places
+    # than players), making a worse solve look better than it is.
+    pool = float(sum(payouts[:len(stacks_chips)]))
     expl = model_exploitability(model, P, x, y, w) / pool
     return JamFoldSolution(
         depth_bb=float(depth), ante=float(ante), model_name="icm",
