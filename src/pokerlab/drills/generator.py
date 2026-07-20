@@ -56,6 +56,12 @@ class Drill:
     legal_actions: tuple[str, ...]
     description: str
     tournament: TournamentContext | None = None
+    # What one big blind is worth in this drill's payoff currency, i.e. the
+    # factor that puts the decision-ε in the same units as the solution's EVs
+    # (round-3 finding [P7']). 1.0 for chip-EV drills, whose EVs are already
+    # bb; the average chip's dollar value for ICM drills, whose EVs are
+    # $-deltas. Carried on the Drill so the scoring call site cannot forget it.
+    bb_value: float = 1.0
 
 
 def _describe(pos: str, depth: float, hand: str, kind: str,
@@ -110,8 +116,18 @@ def _icm_solutions(tc: TournamentContext, sb_seat: int, bb_seat: int
     Frequencies come straight from `solve_jamfold_icm`. Per-hand EVs are the
     real ICM $-deltas, recomputed here from the *public* chart model (same
     reach-weighted normalization the chip solver uses) because the general-sum
-    ICM solve does not expose them. ev_loss for ICM is therefore a $-delta, so
-    ICM correctness is frequency-driven — the honest read for a general-sum spot.
+    ICM solve does not expose them. ev_loss for ICM is therefore a $-delta.
+
+    That $-delta is graded by the decision-ε rule converted into ICM-$ (see
+    `scoring.epsilon`), NOT by frequency. This docstring previously claimed
+    "ICM correctness is frequency-driven — the honest read for a general-sum
+    spot", which described behavior the code never had (round-3 finding
+    [P7']): the 5% mixed-spot hatch opened 0 times in 338 ICM drills, because
+    this solve is essentially pure (max second-action frequency 0.0009). With
+    both the frequency hatch and the unit-mismatched ε branch dead, grading was
+    exact-argmax. These are exact solves from our own engine, so they deserve
+    gradeable drills rather than tier-3 posture — the honesty obligation here
+    is to LABEL the number as ICM-$, which the web layer now does.
     """
     stacks = list(tc.stacks_all)
     payouts = list(tc.payouts)
@@ -157,6 +173,11 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
     # ante here is a property of the fixture tournament, not a free axis, so
     # the key names the ante that context actually has (round-3 finding [E49]).
     icm_ante = float(tournament.ante) / float(tournament.bb) if tournament.bb else 0.0
+    # Average chip value: the prize pool spread over every chip in play, in bb.
+    # Converts the bb-denominated decision-ε into the ICM-$ the payoffs use
+    # (round-3 finding [P7']); see scoring.epsilon for the derivation.
+    total_bb = sum(tournament.stacks_all) / float(tournament.bb)
+    bb_value = (float(sum(tournament.payouts)) / total_bb) if total_bb else 1.0
     for pos, sols in (("SB", sb_sol), ("BB", bb_sol)):
         leak_key = jamfold_category(pos, depth, icm=True, ante_bb=icm_ante)
         for hand in hands.HAND_CLASSES:
@@ -165,7 +186,7 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
                 depth_bb=depth, hand_label=hand, solution=sols[hand],
                 pot_bb=pot, leak_key=leak_key, legal_actions=_ACTIONS[pos],
                 description=_describe(pos, depth, hand, "icm", tournament, icm_ante),
-                tournament=tournament,
+                tournament=tournament, bb_value=bb_value,
             ))
     return out
 
