@@ -26,6 +26,13 @@
     /* Tier labels are load-bearing UI (plan §9), so the approximate section is
        styled as a distinct claim rather than as more rows of the same table. */
     .tier-label { font-weight: 600; color: #7a4d00; }
+    /* A tier-2 row's reference disclosure. Marked but not alarmed: the solve
+       is exact for the inputs it got, so this is a scope note, not a warning
+       (round-4 [1]). Styled distinctly from .approx-free rows so the mixed
+       case is visible at a glance without reading the count. */
+    td.approx-cell { color: #7a4d00; }
+    p.approx { font-size: 0.92rem; color: #555; margin-top: 0.6rem; }
+    p.approx code { color: #7a4d00; }
     .approx { background: #fbfbf5; border-left: 3px solid #c9ad63; padding-left: 0.8rem; }
     .empty { color: #777; font-style: italic; }
   </style>

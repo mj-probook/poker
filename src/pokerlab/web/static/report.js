@@ -107,11 +107,34 @@ function renderSummary(s) {
 function renderLeaks(leaks) {
   const box = document.getElementById("leaks");
   box.innerHTML = "";
+  const rows = leaks.rows;
   box.appendChild(table(
-    ["category", "decisions", "EV-loss/100 (bb)"], leaks,
-    (r) => [[r.leak_key], [String(r.decisions), "num"],
-            [num(r.ev_loss_per_100, 2), "num"]]
+    ["category", "decisions", "EV-loss/100 (bb)", "reference"], rows,
+    (r) => [
+      [r.leak_key], [String(r.decisions), "num"],
+      [num(r.ev_loss_per_100, 2), "num"],
+      // Per-row, and a COUNT — a leak_key mixes tiers, so some of these
+      // decisions were graded against an exact chart reference and some
+      // against an approximated solve. "exact" is the honest word for a row
+      // with nothing to disclose: a NULL provenance means there is nothing to
+      // disclose, not that the reference is unknown.
+      r.approx_decisions
+        ? [`${r.approx_decisions} of ${r.decisions} approximated`, "approx-cell"]
+        : ["exact"],
+    ]
   ));
+  // Explained once, beneath the table, and only when something in it is
+  // actually approximated. The sentence is the server's — this page must not
+  // author its own account of what the solver assumed, or it becomes a second
+  // home for a claim the grader owns.
+  if (rows.some((r) => r.approx_decisions)) {
+    const note = el("p", "", "approx");
+    note.appendChild(el("span", leaks.approx_caveat));
+    // The assumption string itself, as recorded, for rows that carry one.
+    const seen = [...new Set(rows.map((r) => r.provenance).filter(Boolean))];
+    if (seen.length) note.appendChild(el("code", ` ${seen.join("; ")}`));
+    box.appendChild(note);
+  }
 }
 
 function renderTier3(tier3) {

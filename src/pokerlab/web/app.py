@@ -111,6 +111,24 @@ SOURCE_VERBS: dict[str, str] = {
     "chart": "Chart plays",
 }
 
+# What a tier-2 approximation actually means, in the server's words (PLAN §5.3
+# rev-3.2; round-4 [1]). The wording is load-bearing in a direction that is easy
+# to get backwards: the SOLVE is exact — the accuracy bar applies to it in full
+# — and the INPUTS are the approximation. Copy that said only "approximate"
+# would invite the reader to discount the number as sloppy, when what is
+# approximate is the game the solver was handed, not the quality of its answer.
+#
+# Shown per leak beside a COUNT of affected decisions, never as a badge on the
+# section: a leak_key mixes tiers, so some of its decisions carry an exact chart
+# reference and some do not. A blanket label would assert for every row a
+# property only some rows have — the defect f0c1bd8 exists to prevent, and the
+# reason the store half reports a count rather than a boolean.
+APPROX_CAVEAT = (
+    "These solves are exact for the game they were handed — both players' "
+    "ranges assumed uniform and stacks symmetric — not for the hand as "
+    "actually played. Range modeling from the real line is future work."
+)
+
 
 class Answer(BaseModel):
     drill_id: str
@@ -313,7 +331,17 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             ]
             return {
                 "session": session,
-                "leaks": views.hh_leak_report(conn, limit=5),
+                # Shaped like `tier3`: the rows and the honesty text they
+                # require travel together, so no page can render the ranking
+                # while dropping what the numbers assumed (PLAN §5.3 rev-3.2 —
+                # the disclosure must reach "the leak report", not stop at the
+                # Solution). Unlike tier3's label this one qualifies SOME rows,
+                # which is why each row carries its own count and the caveat
+                # only explains what that count means.
+                "leaks": {
+                    "rows": views.hh_leak_report(conn, limit=5),
+                    "approx_caveat": APPROX_CAVEAT,
+                },
                 "tier3": {
                     "label": TIER_LABELS[TIER_BEST_AVAILABLE],
                     "rows": views.tier3_frequency_report(conn),

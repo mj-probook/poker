@@ -63,7 +63,9 @@ def test_report_summarises_the_session_including_failures_and_backlog(imported):
 
 
 def test_report_ranks_the_exact_tier_leaks_by_ev_loss(imported):
-    leaks = _report(imported)["leaks"]
+    # `leaks` is {rows, approx_caveat} since [R4-1] — the ranking and the
+    # disclosure its numbers require travel together, like tier3.
+    leaks = _report(imported)["leaks"]["rows"]
     assert 0 < len(leaks) <= 5
     assert [r["ev_loss_per_100"] for r in leaks] == sorted(
         (r["ev_loss_per_100"] for r in leaks), reverse=True)
@@ -83,7 +85,7 @@ def test_tier3_is_listed_separately_and_labelled_approximate(imported):
     for row in t3["rows"]:
         assert "ev_loss" not in row and "ev_loss_per_100" not in row
     # and it is never mixed into the ranking
-    ranked = {r["leak_key"] for r in body["leaks"]}
+    ranked = {r["leak_key"] for r in body["leaks"]["rows"]}
     assert not (ranked & {r["leak_key"] for r in t3["rows"]})
 
 
@@ -314,7 +316,7 @@ def test_the_good_hand_still_landed_alongside_the_failures(one_good_one_broken):
     body = _report(one_good_one_broken)
     assert body["session"]["hands"] == 1
     assert body["session"]["graded"] > 0
-    assert body["leaks"] or body["tier3"]["rows"], "the good hand produced output"
+    assert body["leaks"]["rows"] or body["tier3"]["rows"], "the good hand produced output"
 
 
 def test_partial_means_batch_pending_only_not_failure(one_good_one_broken):
