@@ -65,13 +65,29 @@ def hh_leak_report(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
 
     ev_loss_per_100 = mean bb conceded per decision × 100 (a bb/100 rate).
     Ties break toward more decisions (higher confidence), then leak_key.
+
+    Carries the tier-2 APPROXIMATION DISCLOSURE, which PLAN §5.3 requires to
+    reach "the leak report" and which used to stop at the Solution ([R4-1]):
+
+      * `approx_decisions` — how many of this leak's decisions were graded
+        against an approximated reference. 0 means every number here came from
+        an exact reference.
+      * `provenance` — what those references assumed, e.g.
+        "ranges=uniform|stack=symmetric". NULL when `approx_decisions` is 0.
+
+    Reported as a COUNT beside the total rather than as a per-row flag because
+    a leak_key mixes tiers: "3 of 11 decisions approximated" is the honest
+    shape, where a single boolean would either overclaim the whole leak as
+    approximate or hide the approximation entirely.
     """
     rows = conn.execute(
         "SELECT leak_key,"
         "       COUNT(*)                 AS decisions,"
         "       SUM(ev_loss)             AS total_ev_loss,"
         "       AVG(ev_loss)             AS avg_ev_loss,"
-        "       100.0 * AVG(ev_loss)     AS ev_loss_per_100"
+        "       100.0 * AVG(ev_loss)     AS ev_loss_per_100,"
+        "       COUNT(provenance)        AS approx_decisions,"
+        "       GROUP_CONCAT(DISTINCT provenance) AS provenance"
         "  FROM gradings"
         " WHERE tier IN (1, 2) AND ev_loss IS NOT NULL"
         " GROUP BY leak_key"

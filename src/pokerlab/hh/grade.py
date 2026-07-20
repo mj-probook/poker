@@ -52,6 +52,15 @@ class Grading:
     frequency: float | None = None   # chosen freq (t1/2) or population freq (t3)
     flags: list[str] = field(default_factory=list)
     note: str = ""
+    # What the grading solution ASSUMED, carried from Solution.range_ctx.
+    # PLAN §5.3 promises the tier-2 range approximation is recorded "in each
+    # Solution's provenance AND in the leak report"; the first half held and the
+    # second was dropped at persist, so a tier-2 grade reached the user as
+    # "exact — solver-graded" with no sign that both ranges were uniform and the
+    # stacks symmetric ([R4-1]). Tier 1 leaves it None: a chart grade's
+    # provenance is the chart, and inventing a string here would make an absent
+    # disclosure look like a present one.
+    provenance: str | None = None
 
 
 def _jamfold_position(d: Decision) -> str | None:
@@ -125,7 +134,8 @@ def grade_tier2(d: Decision, solution: Solution | None) -> Grading:
     sc = score(solution, d.action_type, d.pot_bb)
     return Grading(d.index, TIER_SOLVER, d.action_type, sc.best_action,
                    sc.ev_loss_bb, sc.correct, leak_key, graded=True,
-                   frequency=sc.chosen_frequency)
+                   frequency=sc.chosen_frequency,
+                   provenance=solution.range_ctx)
 
 
 def grade_tier3(d: Decision, population: Population) -> Grading:

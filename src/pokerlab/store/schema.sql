@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS gradings(
   best TEXT NOT NULL,                 -- '' when the tier has no single best action
                                       -- (tier 3 never names one) — see hh/persist.py
   ev_loss REAL,                       -- NULL iff tier = 3 (enforced in code + trigger)
+  -- What the grading reference ASSUMED, copied from Solution.range_ctx.
+  -- PLAN §5.3 promises the tier-2 range approximation is recorded in each
+  -- Solution's provenance AND in the leak report; without this column the
+  -- second half was dropped here and unrecoverable downstream, so a tier-2
+  -- grade surfaced as plain "exact" ([R4-1]). NULL for tier 1 (a chart grade's
+  -- provenance is the chart) and for tier 3 (no reference solution exists).
+  provenance TEXT,
   -- Canonical 4-part category key owned by drills/categories.py:
   --   formation|street|action|depth
   -- depth is a snapped bucket (5/8/10/15/20) for preflop jam/fold and '-' for

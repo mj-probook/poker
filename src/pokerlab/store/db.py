@@ -77,7 +77,8 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
     # Asserted by test rather than assumed, since that asymmetry is exactly what
     # made the column case need this function at all.
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(gradings)")}
-    for name, decl in (("frequency", "REAL"), ("flags", "TEXT")):
+    for name, decl in (("frequency", "REAL"), ("flags", "TEXT"),
+                       ("provenance", "TEXT")):
         if name not in cols:
             conn.execute(f"ALTER TABLE gradings ADD COLUMN {name} {decl}")
 
@@ -191,20 +192,26 @@ def insert_grading(conn: sqlite3.Connection, hand_id: int, decision_idx: int,
                    tier: int, chosen: str, best: str, ev_loss: float | None,
                    leak_key: str, graded_at: str, *, commit: bool = True,
                    frequency: float | None = None,
-                   flags: Iterable[str] = ()) -> int:
+                   flags: Iterable[str] = (),
+                   provenance: str | None = None) -> int:
     """Insert one graded decision.
 
     `frequency`/`flags` are the reference's read on the hero's action — for
     tier 3 they are the ONLY output it may carry (plan §5.3), so they are
     optional here but never optional in meaning. Flags are stored comma-joined.
+
+    `provenance` is what the reference ASSUMED (Solution.range_ctx). It is
+    optional because tier 1 and tier 3 have none to give, not because a tier-2
+    grade may omit it — see the leak-report view, which reads it back.
     """
     cur = conn.execute(
         "INSERT INTO gradings(hand_id, decision_idx, tier, chosen, best,"
-        " ev_loss, leak_key, graded_at, frequency, flags)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " ev_loss, leak_key, graded_at, frequency, flags, provenance)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (hand_id, decision_idx, tier, chosen, best,
          None if ev_loss is None else float(ev_loss), leak_key, graded_at,
-         None if frequency is None else float(frequency), ",".join(flags)),
+         None if frequency is None else float(frequency), ",".join(flags),
+         provenance or None),
     )
     if commit:
         conn.commit()
