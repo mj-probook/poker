@@ -103,6 +103,18 @@ class PBS:
         """One-hot betting line (5) + both reach vectors (12) = 17 dims."""
         onehot = np.zeros(len(LEAF_LINES))
         idx = _LINE_INDEX.get(tuple(self.bets))
+        # An unregistered line encodes all-zero — the SAME vector as the root
+        # PBS, whose empty `bets=()` legitimately has no line (PBS.initial;
+        # pinned by test_rebel_pbs). That collision is harmless only while
+        # LEAF_LINES is exhaustive. EXTENDING LEAF_LINES? Add the line here or
+        # it trains as root. The guard says so at runtime rather than trusting
+        # the reader: root (bets=()) passes untouched, any other unregistered
+        # line raises instead of silently training as a different state.
+        if idx is None and self.bets:
+            raise ValueError(
+                f"betting line {tuple(self.bets)!r} is not in LEAF_LINES, so its "
+                "features would encode all-zero and be indistinguishable from "
+                "the root PBS. Add it to LEAF_LINES.")
         if idx is not None:
             onehot[idx] = 1.0
         return np.concatenate([onehot, self.reach[0], self.reach[1]])
