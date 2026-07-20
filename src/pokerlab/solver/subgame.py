@@ -275,6 +275,14 @@ class _TreeBuilder:
             (c, self._street_start(tuple(board) + (c,), invested, stack))
             for c in _remaining(board)
         ]
+        # `min(stack)` is only the node's stack if both players have the same
+        # amount behind. Every tree this solver builds starts symmetric
+        # (`build` seeds both seats with stack0) and betting keeps them so, but
+        # the collapse is silent if that ever stops holding — the Chance node
+        # would report the shorter stack as though it were both (wave-3 [M11]).
+        assert stack[0] == stack[1], (
+            f"asymmetric stacks at a chance node: {stack} — the subgame solver "
+            "assumes symmetric stacks (see tier2.effective_behind_bb)")
         return Chance(children, float(divisor), pot, float(min(stack)))
 
     def _street_start(self, board, invested, stack):

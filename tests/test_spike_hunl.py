@@ -328,3 +328,50 @@ def test_run_spike_tiny_produces_verdict():
     assert np.isfinite(v.val_loss)
     assert np.isfinite(v.mean_expl_net_bb) and np.isfinite(v.mean_expl_oracle_bb)
     assert isinstance(v.go, bool)
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 [M2]: the net was evaluated on ranges drawn SPARSER than any it was
+# trained on (eval keep_frac 0.12 vs generation 0.2), so 28.5% of eval beliefs
+# sat below the sparsest training belief. The net was then blamed for answers
+# to questions outside its own support.
+#
+# This pins the POST-FIX INVARIANT — the beliefs the leaf is queried on lie
+# inside the sampled training support — rather than the weaker "the two
+# keep_fracs are equal", which a later refactor could satisfy while still
+# drawing from different distributions.
+# --------------------------------------------------------------------------- #
+def test_eval_beliefs_lie_within_the_training_belief_support():
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+
+    def live_counts(keep_frac, n=150):
+        out = []
+        for _ in range(n):
+            board = hunl._deal_board(rng, 5)
+            r = hunl.sample_range(rng, board, keep_frac=keep_frac)
+            if r.sum() > 0:
+                out.append(int((r > 0).sum()))
+        return np.array(out)
+
+    train = live_counts(hunl.GEN_KEEP_FRAC)
+    # what run_spike's own default now draws for evaluation
+    import inspect
+    eval_kf = inspect.signature(hunl.run_spike).parameters["eval_keep_frac"].default
+    held_out = live_counts(eval_kf)
+
+    below = (held_out < train.min()).mean()
+    assert below == 0.0, (
+        f"{below:.1%} of eval beliefs are sparser than ANY training belief "
+        f"(train min {train.min()}, eval min {held_out.min()}): the net is being "
+        "queried off its own training support")
+
+
+def test_the_generation_density_is_shared_not_duplicated():
+    """The invariant above is only durable if one constant feeds both sides."""
+    import inspect
+    assert (inspect.signature(hunl.run_spike).parameters["eval_keep_frac"].default
+            is hunl.GEN_KEEP_FRAC)
+    assert (inspect.signature(hunl.sample_range).parameters["keep_frac"].default
+            is hunl.GEN_KEEP_FRAC)

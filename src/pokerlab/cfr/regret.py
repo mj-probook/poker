@@ -45,7 +45,14 @@ def regret_match_np(regret: np.ndarray, *, axis: int) -> np.ndarray:
     (action, hand) and the ReBeL trunk as (card, action), so the axis is
     explicit rather than assumed.
     """
-    pos = np.maximum(regret, 0.0)
+    # `np.where(x > 0)`, not `np.maximum(x, 0)`: they differ on NaN, and the
+    # scalar rule above is a `x if x > 0.0 else 0.0` comparison. maximum
+    # PROPAGATES a NaN, which then poisons the sum and silently sends the whole
+    # infoset uniform; the comparison treats it as non-positive and drops that
+    # action alone, exactly as the scalar version does. Making them agree keeps
+    # "both implement the identical rule" a true statement rather than one with
+    # a footnote (wave-3 [M12]).
+    pos = np.where(regret > 0.0, regret, 0.0)
     s = pos.sum(axis=axis, keepdims=True)
     unif = 1.0 / regret.shape[axis]
     return np.where(s > 0.0, pos / np.where(s > 0.0, s, 1.0), unif)

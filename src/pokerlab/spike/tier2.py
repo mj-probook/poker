@@ -15,6 +15,20 @@ Uses the seams Slice F already exposed, no changes to `hh` grading:
 Scope guard (plan/impl §3 Slice I): only turn (4-card) and river (5-card)
 subgames are solved — never a full flop — and only when the hero is the OOP root
 actor of the subgame (the solved root's player). Other spots return None (miss).
+
+WHAT THE EV_LOSS ACTUALLY MEANS (wave-3 [M4]). The solve is exact, but it is
+exact for a game that is not quite the one the hero played: BOTH players are
+given UNIFORM ranges (`sg.uniform_range()`), and the stack is the documented
+symmetric approximation (round-1 [22], see `effective_behind_bb`). Neither
+villain nor hero was actually playing a uniform range, so the number is an
+answer to a well-posed nearby question, not to "how much did this cost you".
+
+That is defensible for training — it beats no reference at all, and the
+alternative is inventing ranges — but it must not be invisible. Every Solution
+this module emits carries `RANGE_PROVENANCE` in its `range_ctx`, so the
+assumption travels with the number into the store and any surface that displays
+it, and the approximation is stated beside [22] rather than inferred from
+reading the source.
 """
 
 from __future__ import annotations
@@ -185,8 +199,15 @@ def solve_decision(d: Decision, *, iters: int = DEFAULT_ITERS,
     return solver
 
 
+# What the tier-2 solve ASSUMES, recorded on every Solution it emits. The solve
+# is exact for the game it was handed; this says which game that was (wave-3
+# [M4]). Both players get uniform ranges and a symmetric stack, so an ev_loss
+# from here is exact w.r.t. those assumptions, NOT w.r.t. the hand as played.
+RANGE_PROVENANCE = "ranges=uniform|stack=symmetric"
+
+
 def _hero_solution(d: Decision, solver: sg.SubgameSolver) -> Solution | None:
-    ctx = f"solve|expl_bb={solver.exploitability():.4g}"
+    ctx = f"solve|{RANGE_PROVENANCE}|expl_bb={solver.exploitability():.4g}"
     per_class = root_solution_by_class(solver, player=0, range_ctx=ctx)
     sol = per_class.get(hand_label(d.hole))
     return _collapsed_solution(sol) if sol is not None else None
@@ -221,7 +242,7 @@ def _solve_gated(conn, d: Decision, *, iters: int, cfg: sg.BetConfig,
             return None
         key = tier2_key(d)
         if persist:
-            path, expl = write_solve(solved, key)
+            path, expl = write_solve(solved, key, range_note=RANGE_PROVENANCE)
             db.index_solution(conn, key, path, sg.SOLVER_VERSION,
                               expl / solved.pot0)
         return key, _hero_solution(d, solved)

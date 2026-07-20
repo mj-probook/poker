@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import pytest
+
 from pokerlab.engine.cards import card_from_str
 from pokerlab.solver import subgame as sg
 from pokerlab.solver.adapter import root_solution_by_class
@@ -122,3 +124,47 @@ def test_no_emitted_solution_is_all_zero_ev_with_uniform_frequencies():
         freqs = [f for _, f in sol.actions.values()]
         assert any(ev != 0.0 for ev in evs) or len(set(freqs)) > 1, (
             f"class {cls} looks fabricated: EVs {evs}, freqs {freqs}")
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 [M8]: class aggregation weighted each combo by my_reach alone, so a
+# combo the villain's range heavily blocks spoke as loudly as an unblocked one
+# despite reaching showdown far less often. The weight is now
+# my_reach x valid_opp. TRAP: the per-combo EVs are already conditional
+# (subgame divides by valid_opp before returning), so this must touch the weight
+# and nothing else.
+# --------------------------------------------------------------------------- #
+def test_uniform_ranges_make_the_blocker_weighting_a_no_op():
+    """Not a weak test — it pins WHY the change is safe to land now.
+
+    Under uniform ranges valid_opp is identical for every live combo, so it
+    scales a class' weights by one constant and cancels. That is what makes
+    [M8] inert for today's tier-2 (which assumes uniform ranges, see [M4]).
+    """
+    import numpy as np
+    board = (51, 47, 43, 7, 3)
+    cfg = sg.BetConfig(sizes=(0.75,), jam=False, max_raises=0)
+    tree = sg.build_tree(board, pot0=8.0, stack=20.0, cfg=cfg)
+    s = sg.SubgameSolver(tree, board, sg.uniform_range(), sg.uniform_range(), pot0=8.0)
+    s.iterate(10)
+
+    valid_opp = s.valid_opponent_reach(0)
+    live = valid_opp[valid_opp > 0]
+    assert live.size > 0
+    assert np.ptp(live) == pytest.approx(0.0, abs=1e-12), (
+        "uniform ranges must give every live combo the same valid_opp")
+
+
+def test_a_blocked_combo_is_down_weighted_when_ranges_differ():
+    """With a non-uniform villain, valid_opp genuinely varies within a class."""
+    import numpy as np
+    board = (51, 47, 43, 7, 3)
+    cfg = sg.BetConfig(sizes=(0.75,), jam=False, max_raises=0)
+    tree = sg.build_tree(board, pot0=8.0, stack=20.0, cfg=cfg)
+    r1 = sg.uniform_range() * (np.random.default_rng(0).random(sg.NUM_COMBOS) < 0.35)
+    s = sg.SubgameSolver(tree, board, sg.uniform_range(), r1, pot0=8.0)
+    s.iterate(10)
+
+    live = s.valid_opponent_reach(0)
+    live = live[live > 0]
+    assert np.ptp(live) > 0.0, "a non-uniform villain must vary valid_opp"

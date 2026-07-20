@@ -25,13 +25,23 @@ SOLVES_DIR = Path(__file__).resolve().parents[3] / "solves"
 
 
 def write_solve(solver: SubgameSolver, spot_key: str, path: str | Path | None = None,
-                player: int = 0, solver_version: str = SOLVER_VERSION) -> tuple[Path, float]:
+                player: int = 0, solver_version: str = SOLVER_VERSION,
+                range_note: str = "") -> tuple[Path, float]:
     """Write a solve file for ``solver`` and return (path, exploitability_bb).
 
     The file name defaults to ``solves/<sanitized spot_key>.json``.
+
+    ``range_note`` records what the solve ASSUMED about the ranges it was given
+    — the solver cannot know whether they were real or uniform, so the caller
+    states it. It rides in `range_ctx`, which is the field that survives into
+    the cached file and back out at grading time, so the assumption travels with
+    the number instead of being lost at the cache boundary (wave-3 [M4]).
     """
     expl = solver.exploitability()
-    range_ctx = f"{spot_key}|{solver_version}|expl_bb={expl:.5g}"
+    parts = [spot_key, solver_version]
+    if range_note:
+        parts.append(range_note)
+    range_ctx = "|".join(parts) + f"|expl_bb={expl:.5g}"
     solutions = root_solution_by_class(solver, player=player, range_ctx=range_ctx)
     payload = {
         "spot_key": spot_key,

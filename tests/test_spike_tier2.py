@@ -213,3 +213,32 @@ def test_the_root_spot_on_the_same_street_is_still_solvable():
     root = next(x for x in ds if x.street == "river" and x.to_call == 0
                 and x.tier == TIER_SOLVER)
     assert tier2.solvable(root), "an unfaced postflop root must stay tier-2"
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3 [M4]: tier-2 solves with UNIFORM ranges for both players and a
+# symmetric stack, then emitted an exact ev_loss carrying no record of either
+# assumption. The solve is exact for the game it was handed; the provenance is
+# what says which game that was.
+# --------------------------------------------------------------------------- #
+def test_a_tier2_solution_records_its_range_assumption():
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+    conn = db.connect()
+    key = tier2.cache_solve(conn, river, iters=40, cfg=FAST_CFG)
+    assert key is not None
+
+    sol = tier2.make_inline_solution_for(conn)(river)
+    assert sol is not None
+    assert tier2.RANGE_PROVENANCE in sol.range_ctx, (
+        "an exact ev_loss must carry the assumptions it is exact under")
+
+
+def test_the_provenance_survives_the_label_collapse():
+    """`_collapsed_solution` rewrites actions; it must not drop provenance."""
+    parsed, _ = _ante_hu()
+    river = extract_decisions(parsed)[4]
+    solver = tier2.solve_decision(river, iters=40, cfg=FAST_CFG)
+    assert solver is not None
+    sol = tier2._hero_solution(river, solver)
+    assert sol is not None and tier2.RANGE_PROVENANCE in sol.range_ctx

@@ -47,3 +47,18 @@ def test_numpy_matches_pure_python_on_every_slice(axis):
                  ).reshape(moved.shape), -1, axis)
     assert got == pytest.approx(want)
     assert got.sum(axis=axis) == pytest.approx(np.ones(got.sum(axis=axis).shape))
+
+
+def test_the_two_implementations_agree_on_nan():
+    """[M12] They used to disagree: maximum() propagates NaN and sends the whole
+    infoset uniform, while the scalar comparison drops just that action.
+
+    NaN regret means something upstream is already broken, but the two solvers
+    must not disagree about what a broken input means — that is the property
+    the shared module exists to provide.
+    """
+    reg = [float("nan"), 1.0, -2.0]
+    want = regret_match(reg)
+    got = regret_match_np(np.array(reg).reshape(-1, 1), axis=0).ravel()
+    assert got == pytest.approx(want)
+    assert want == pytest.approx([0.0, 1.0, 0.0])

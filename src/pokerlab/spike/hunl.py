@@ -6,7 +6,9 @@ Slice-D subgame solver as the exact oracle AND the data-gen labeller:
   1. DATA-GEN — sample river subgames (5-card boards, 20bb, varied off-blueprint
      beliefs), solve each exactly (Slice-D CFR+), and record a PBS -> CFV row:
      features = board + pot + both players' per-class belief; target = the OOP
-     per-class root counterfactual value. SpotKey-stratified; Parquet via pyarrow.
+     per-class root counterfactual value. Parquet via pyarrow. Boards are drawn
+     i.i.d. and their flop iso-class is RECORDED per row — the rows are not
+     stratified across iso-classes, which the docs used to claim (wave-3 [M9]).
   2. VALUE NET — a small MLP PBS -> per-class CFV, trained locally in seconds.
   3. EVAL (the L4 go/no-go) — on >=20 HELD-OUT *turn* subgames, compare the
      net-driven depth-limited turn solver to the exact oracle by mean
@@ -94,8 +96,15 @@ def _range_from_class_weights(w: np.ndarray, board: tuple[int, ...]) -> np.ndarr
     return r * sg.board_mask(board)
 
 
+# Range density used to GENERATE training data. Evaluation must draw from the
+# same distribution or the net is queried off its own training support, so both
+# sides read this one constant rather than carrying separate literals that drift
+# (wave-3 [M2]).
+GEN_KEEP_FRAC = 0.2
+
+
 def sample_range(rng: np.random.Generator, board: tuple[int, ...],
-                 *, keep_frac: float = 0.2) -> np.ndarray:
+                 *, keep_frac: float = GEN_KEEP_FRAC) -> np.ndarray:
     """A varied, off-blueprint, SPARSE range: a random subset of classes gets
     weight (realistic + keeps the live-combo count — and thus solve cost — low),
     occasionally strength-tilted, always board-masked."""
@@ -228,7 +237,7 @@ def counterfactual_from_normalized(solver: SubgameSolver, ev0, ev1, reach0, reac
 
 
 # --------------------------------------------------------------------------- #
-# Dataset generation (SpotKey-stratified) + Parquet.
+# Dataset generation (iso-class RECORDED per row, not stratified) + Parquet.
 # --------------------------------------------------------------------------- #
 @dataclass
 class Sample:
@@ -477,23 +486,74 @@ class SpikeVerdict:
     n_eval: int
     mean_expl_oracle_bb: float
     mean_expl_net_bb: float
-    threshold_bb: float
+    tolerance: float
     go: bool
+
+    @property
+    def ratio(self) -> float:
+        """Net exploitability as a MULTIPLE of the depth-limited oracle's own.
+
+        The scale-free number, and the one to quote: it says how much worse the
+        learned leaf is than the best this decomposition could do, rather than
+        how big it is in bb — which depends on the pot sizes the eval happened
+        to draw (wave-3 [M3]/[M6]).
+        """
+        return float("inf") if self.mean_expl_oracle_bb <= 0 else (
+            self.mean_expl_net_bb / self.mean_expl_oracle_bb)
 
 
 def run_spike(*, n_rows: int = 10_000, n_eval: int = 20, seed: int = 0,
               gen_iters: int = 120, eval_iters: int = 200,
-              threshold_bb: float = 0.75, epochs: int = 300,
-              eval_keep_frac: float = 0.12) -> SpikeVerdict:
+              tolerance: float = 2.0, epochs: int = 300,
+              eval_keep_frac: float = GEN_KEEP_FRAC) -> SpikeVerdict:
     """Full local pipeline -> L4 go/no-go verdict (no cloud, minutes).
 
-    ``eval_keep_frac`` keeps the held-out eval subgames sparse so the turn+river
-    oracle stays a fast solve; data-gen uses the default range density.
+    THE GO RULE IS RELATIVE (wave-3 [M3]). It used to be
+    ``mean_net <= 0.75`` — an absolute bb threshold with no derivation behind
+    it, compared against nothing. The baseline it should have been compared to
+    was already being computed in the same loop: ``mean_expl_oracle_bb``, the
+    exploitability of the SAME depth-limited decomposition with a perfect
+    (solved) leaf. That is the floor the learned leaf is trying to reach, so the
+    question is "how much worse than the best this design can do", not "how many
+    big blinds".
+
+    ``tolerance`` is the multiple of that floor we are willing to accept. It is
+    a stated policy choice rather than a derived constant — but the quantity it
+    applies to is now derived, which is the part that was wrong. Report
+    ``verdict.ratio`` alongside any verdict: it is scale-free, whereas the bb
+    figure moves with whatever pot sizes the eval happened to draw.
+
+    ``eval_keep_frac`` defaults to `GEN_KEEP_FRAC` — the SAME density the
+    training data was generated at. It used to be sparser (0.12 vs 0.2), which
+    put 28.5% of evaluation beliefs below the sparsest belief the net had ever
+    seen: the net was being asked about board states outside its own training
+    support and then blamed for the answer (wave-3 [M2]).
+
+    Aligning the densities closes that half of the gap. It does NOT close the
+    other half: within a solve, beliefs at the leaf are STRATEGY-WEIGHTED
+    reaches produced by CFR iterations, while training beliefs are sampled
+    independently. No value of this parameter makes an independently-sampled
+    range look like a reach vector that a solver walked to. Closing that
+    properly means generating training data along the solver's own trajectory —
+    the ReBeL self-play loop — which is out of scope for a spike and is recorded
+    as an open cause rather than papered over.
     """
     samples = generate_samples(n_rows, seed=seed, iters=gen_iters)
     X = np.array([s.feats for s in samples], dtype=np.float32)
     Y = np.array([s.cfv for s in samples], dtype=np.float32)
     M = np.array([s.mask for s in samples], dtype=np.float32)
+    # A row whose targets are entirely zero teaches nothing and quietly drags
+    # the reported val_loss toward zero, making the net look better the more
+    # degenerate its data is. That is the [19]-class failure — a number that
+    # improves for the wrong reason — so it is refused rather than averaged in
+    # (wave-3 [M14]).
+    dead = int((M.sum(axis=1) == 0).sum())
+    if dead:
+        raise ValueError(
+            f"{dead}/{len(M)} training rows have an all-zero target mask: the "
+            "subgames produced no valid matchup. Fix generation rather than "
+            "training on rows that cannot carry signal.")
+
     net, val_loss = train_valuenet(X, Y, M, epochs=epochs, seed=seed)
 
     rng = np.random.default_rng(seed + 1)
@@ -508,9 +568,18 @@ def run_spike(*, n_rows: int = 10_000, n_eval: int = 20, seed: int = 0,
         res = evaluate_spot(net, board4, pot0, r0, r1, iters=eval_iters)
         ex_or.append(res["expl_oracle_bb"])
         ex_net.append(res["expl_net_bb"])
+    # Degenerate eval draws are skipped above, so the loop can silently end up
+    # averaging over far fewer spots than asked for. A verdict computed from a
+    # handful of subgames is not a verdict (wave-3 [M14]).
+    if len(ex_net) < n_eval:
+        raise ValueError(
+            f"only {len(ex_net)}/{n_eval} eval spots produced a valid matchup; "
+            "the go/no-go would be averaging over a smaller sample than "
+            "requested. Raise n_eval or eval_keep_frac.")
+
     mean_or = float(np.mean(ex_or)); mean_net = float(np.mean(ex_net))
     return SpikeVerdict(
         n_rows=len(samples), val_loss=val_loss, n_eval=len(ex_net),
         mean_expl_oracle_bb=mean_or, mean_expl_net_bb=mean_net,
-        threshold_bb=threshold_bb, go=mean_net <= threshold_bb,
+        tolerance=tolerance, go=mean_net <= mean_or * tolerance,
     )

@@ -37,8 +37,10 @@ reach at its river deal — derived from the tree itself (`river_entry_states`),
 it tracks the bet grid automatically and the net is trained on the distribution
 it will be *queried* at.
 
-Data is SpotKey-stratified (flop iso-class recorded per row) and written to
-Parquet via pyarrow.
+Boards are drawn i.i.d.; each row RECORDS its flop iso-class. That is not
+stratification, which is what this line used to claim (wave-3 [M9]) — no
+mechanism balances rows across iso-classes, and a 400-draw sample lands in 350
+distinct classes with 1–4 rows each. Written to Parquet via pyarrow.
 
 ## The depth-limited solver
 
@@ -50,8 +52,12 @@ converts the prediction into the opponent-reach-weighted **counterfactual units*
 node's divisor. Only training (`_walk`) is depth-limited; **exploitability is
 measured in the FULL turn+river game** — the net-driven turn strategy grafted
 onto the exact river continuation, best-responded with Slice-D's verified
-vectorized BR. So the reported number is the real cost of the net's
-approximation, exactly the L4 metric.
+vectorized BR. So the reported number is an **upper bound** on the cost of the
+net's approximation, which is the L4 metric. It is not purely that cost: the
+measured exploitability also contains the residual from finite CFR iterations
+and from the depth-limit itself, neither of which is attributable to the net.
+Calling it "the real cost of the net's approximation" claimed an attribution
+the harness cannot make (wave-3 [M7]).
 
 A leaf standing in for a subtree has to match it in **units** and in **state**;
 this harness got both wrong at first, and the Go/no-go section below records
@@ -75,12 +81,13 @@ epochs=400, eval_keep_frac=0.10)` — a representative local-minutes spike
 |---|---|
 | data rows (river solves) | 3000 |
 | value-net held-out loss (masked MSE over both heads, bb²) | 117.7 |
-| … as RMS CFV error / target std | 10.9 bb / 16.2 bb → **45% of target variance unexplained** |
+| … as RMS CFV error / target std | 10.85 bb / 15.04 bb → **52% of target variance unexplained** |
 | held-out eval subgames | 20 |
 | mean exploitability — **oracle** (exact turn+river) | **0.191 bb** |
 | mean exploitability — **net-driven** depth-limited turn | **3.257 bb** |
-| go/no-go threshold | 0.75 bb |
-| **verdict** | **NO-GO** (net-driven 3.26 bb ≫ 0.75 bb bar) |
+| net / oracle ratio | **17.1×** |
+| go/no-go rule | net ≤ oracle × tolerance (tolerance 2.0) |
+| **verdict** | **NO-GO** (17.1× the oracle, against a 2× tolerance) |
 
 > **Superseded runs**, kept for the record — the verdict was NO-GO in all three:
 >
@@ -93,16 +100,40 @@ epochs=400, eval_keep_frac=0.10)` — a representative local-minutes spike
 > **The loss column is not comparable across runs.** Fixing the pot/stack
 > mismatch widened the training distribution (pots to ~60bb instead of ≤20bb),
 > so the targets themselves are ~3× larger and a larger MSE is expected. The
-> scale-free reading — 45% of target variance unexplained — is the one to use.
+> scale-free reading — 52% of target variance unexplained — is the one to use.
+
+**Std convention (wave-3 [M6]).** "Target variance" means the MEAN-CENTRED
+variance of the target CFVs over masked entries only (20.0% of the target
+matrix; unmasked entries are not predictions and must not dilute it), i.e. the
+usual 1 − R². On the recorded 3000-row dataset that std is **15.04 bb**, so
+`117.7 bb² / 15.04² = 52%`.
+
+This convention has to be stated because it dominates the answer: measured about
+zero instead of about the mean, the same numbers read **23%** unexplained,
+because the targets have a large positive mean (16.79 bb) and pot-sized offsets
+would masquerade as explained variance. The previously recorded **45%** implied
+a std of 16.2 bb, which does not reproduce under either convention; it is
+corrected here rather than carried forward.
 
 ## Go / no-go
 
 **NO-GO at spike scale.** The mechanism is validated — the exact turn+river
 oracle converges to a low **0.19 bb** exploitability baseline, and the harness
 measures the net-driven turn strategy in the *full* game with Slice-D's verified
-BR — but the value net at 3000-row scale is far too coarse, leaving **45% of
+BR — but the value net at 3000-row scale is far too coarse, leaving **52% of
 the target CFV variance unexplained**: the net-driven depth-limited turn solve
-is **3.26 bb** exploitable, ~17× the oracle and ~4.3× the bar.
+is **3.26 bb** exploitable, **17.1× the oracle**.
+
+**The go rule is now relative (wave-3 [M3]).** It used to be an absolute
+`≤ 0.75 bb`, a constant with no derivation behind it, compared against nothing —
+even though the baseline it should have been measured against was already being
+computed in the same loop: the exploitability of the SAME depth-limited
+decomposition with an exact (solved) leaf. That is the floor this design can
+reach, so the question is "how much worse than the best this decomposition can
+do", not "how many big blinds". The ratio is also the scale-free number: the bb
+figure moves with whatever pot sizes the eval happens to draw, the ratio does
+not. The verdict is unchanged and robust either way — 17× is not near any
+plausible tolerance.
 
 **It took three runs to earn that sentence.** The first write-up asserted the
 gap was "a data/accuracy result, not a mechanism bug". That was false when
