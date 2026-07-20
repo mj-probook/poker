@@ -37,6 +37,7 @@ from collections.abc import Callable
 
 from pokerlab.engine.cards import card_to_str
 from pokerlab.hh.decisions import Decision, hand_label
+from pokerlab.hh.persist import UnsolvableSpot
 from pokerlab.solver import subgame as sg
 from pokerlab.solver.adapter import root_solution_by_class
 from pokerlab.solver.solve_io import load_solve, write_solve
@@ -255,8 +256,28 @@ def _solve_gated(conn, d: Decision, *, iters: int, cfg: sg.BetConfig,
 
 def make_drain_solver(conn, *, iters: int = DEFAULT_ITERS, cfg: sg.BetConfig = TIER2_CFG,
                       persist: bool = True) -> Callable[[str, Decision], Solution | None]:
-    """solver for drain_batch_queue: real solve, cache+index, hero Solution."""
+    """solver for drain_batch_queue: real solve, cache+index, hero Solution.
+
+    A GATE REFUSAL IS TERMINAL HERE (wave-3). Returning None would mean "miss",
+    and a miss means solvable-but-not-yet-solved — the row stays queued for a
+    later drain. But every reason `solvable()` refuses is STRUCTURAL: wrong
+    street, hero not at the subgame root, nothing behind. No retry can change
+    any of them, so a refused row queued as a miss sits pending forever while
+    the session report keeps promising the operator that draining will move it.
+
+    So refusal raises `UnsolvableSpot` -> status 'unsolvable', which is visible,
+    counted apart from a bug-failure, and still reopenable by
+    `retry_failed_batch` if the gate ever widens — which is exactly what that
+    escape hatch is for.
+    """
     def solver(spot_key: str, d: Decision) -> Solution | None:
+        if not solvable(d):
+            # NB: the queue label, not `tier2_key` — the latter needs a flop to
+            # bucket and raises on the preflop spots this gate also refuses.
+            raise UnsolvableSpot(
+                f"{d.formation}|{d.street}: outside what the tier-2 solver "
+                f"models (board={len(d.board)} cards, to_call={d.to_call}, "
+                f"behind={effective_behind_bb(d):.2f}bb)")
         got = _solve_gated(conn, d, iters=iters, cfg=cfg, persist=persist)
         return None if got is None else got[1]
     return solver
@@ -269,6 +290,11 @@ def cache_solve(conn, d: Decision, *, iters: int = DEFAULT_ITERS,
     Same gate and same solve as the drain worker — it previously bypassed
     `solvable()` entirely, so it would happily cache a solve the drain would
     refuse to produce (wave-2 [Q22]).
+
+    Unlike the drain, a refusal here stays a quiet no-op returning None: the
+    cache warmer has no queue row to close, so there is no state to make
+    terminal. The gate answer is identical; only what the caller does with it
+    differs.
     """
     got = _solve_gated(conn, d, iters=iters, cfg=cfg, persist=True)
     return None if got is None else got[0]

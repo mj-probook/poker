@@ -235,14 +235,14 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
         # Mismatch is terminal and loud: the backlog no longer describes the
         # hand, so grading it would write a confidently wrong row.
         if spot_key(d) != row["spot_key"]:
-            db.set_batch_status(conn, row["id"], "failed")
+            db.set_batch_status(conn, row["id"], "mismatched")
             mismatched += 1
             continue
 
         try:
             solution = solver(row["spot_key"], d)
         except UnsolvableSpot:
-            db.set_batch_status(conn, row["id"], "failed")
+            db.set_batch_status(conn, row["id"], "unsolvable")
             unsolvable += 1
             continue
         except Exception:  # noqa: BLE001 - per-row isolation boundary
@@ -279,7 +279,7 @@ def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
             conn.commit()
         except UnsolvableSpot:
             conn.rollback()
-            db.set_batch_status(conn, row["id"], "failed")
+            db.set_batch_status(conn, row["id"], "unsolvable")
             unsolvable += 1
             continue
         except Exception:  # noqa: BLE001 - per-row isolation boundary

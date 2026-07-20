@@ -23,6 +23,19 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
+# Must match the CHECK on batch_queue.status in schema.sql. Kept as one named
+# constant because the previous Python-side literal silently drifted from the
+# schema the moment a status was added: the CHECK accepted the new value and
+# this guard rejected it.
+#
+#   pending/running  in flight
+#   done             graded
+#   failed           a bug failed the row -- fix it, then retry_failed_batch
+#   unsolvable       structurally outside the solver -- needs a solver upgrade
+#   mismatched       the queue no longer describes the hand (hh/persist [B2])
+BATCH_STATUSES = frozenset(
+    {"pending", "running", "done", "failed", "unsolvable", "mismatched"})
+
 
 def schema_sql() -> str:
     return SCHEMA_PATH.read_text()
@@ -40,8 +53,47 @@ def connect(path: str | Path = ":memory:", *, check_same_thread: bool = True
     # schema runs so every connection is enforcing from its first statement.
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(schema_sql())
+    _ensure_current_schema(conn)
     conn.commit()
     return conn
+
+
+def _ensure_current_schema(conn: sqlite3.Connection) -> None:
+    """Bring a PRE-EXISTING database up to the current schema, idempotently.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so
+    a `pokerlab.db` created before a schema change silently keeps the old shape.
+    For a nullable column that just degrades a feature. For the wave-3 [B3]
+    uniqueness rule it is worse: the protection against double-grading a
+    decision would be absent on exactly the databases that already hold real
+    data.
+
+    No migration framework — this is a single-user local tool and versioned
+    migrations would be speculative infrastructure. Two idempotent statements.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(gradings)")}
+    for name, decl in (("frequency", "REAL"), ("flags", "TEXT")):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE gradings ADD COLUMN {name} {decl}")
+
+    # SQLite cannot ALTER a UNIQUE constraint into an existing table, but a
+    # unique index is equivalent enforcement.
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS gradings_hand_decision_uq"
+                     " ON gradings(hand_id, decision_idx)")
+    except sqlite3.IntegrityError as exc:
+        # Creation fails only if the data ALREADY violates it. That is not a
+        # migration problem to skip past — it means this database contains
+        # duplicate gradings for a decision, which double-count into every leak
+        # statistic downstream. Fail loudly and name it.
+        raise sqlite3.IntegrityError(
+            "this database already contains DUPLICATE gradings for the same "
+            "(hand_id, decision_idx), so the wave-3 [B3] uniqueness rule cannot "
+            "be applied. Those rows double-count into every leak statistic. "
+            "Inspect with:\n"
+            "  SELECT hand_id, decision_idx, COUNT(*) c FROM gradings\n"
+            "  GROUP BY hand_id, decision_idx HAVING c > 1;"
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -240,13 +292,16 @@ def recover_running_batch(conn: sqlite3.Connection) -> int:
 def retry_failed_batch(conn: sqlite3.Connection) -> int:
     """Reopen terminally-failed rows for another drain; return the count.
 
-    'failed' means "do not keep retrying this automatically" — a genuinely
-    unsolvable spot, or a bug. Neither should silently vanish forever, so this
-    is the deliberate escape hatch: fix the cause, reopen, drain again. Never
-    called automatically (wave-2 [E15]).
+    Reopens every TERMINAL cause — 'failed', 'unsolvable' and 'mismatched'.
+    They are separate statuses because they need separate operator guidance
+    (only 'failed' clears by fixing a bug), but all three are deliberate escape
+    hatches rather than black holes: a gate that widens later should be able to
+    pick up the spots it used to refuse. Never called automatically (wave-2
+    [E15]).
     """
     cur = conn.execute(
-        "UPDATE batch_queue SET status='pending' WHERE status='failed'")
+        "UPDATE batch_queue SET status='pending'"
+        " WHERE status IN ('failed', 'unsolvable', 'mismatched')")
     conn.commit()
     return int(cur.rowcount)
 
@@ -255,8 +310,9 @@ def set_batch_status(conn: sqlite3.Connection, row_id: int, status: str, *,
                      commit: bool = True) -> None:
     """Set a row's status. ``commit=False`` lets a caller bind the status to the
     write it describes in one transaction (see `hh.persist.drain_batch_queue`)."""
-    if status not in ("pending", "running", "done", "failed"):
-        raise ValueError(f"bad batch status {status!r}")
+    if status not in BATCH_STATUSES:
+        raise ValueError(
+            f"bad batch status {status!r} (expected one of {sorted(BATCH_STATUSES)})")
     conn.execute("UPDATE batch_queue SET status=? WHERE id=?", (status, row_id))
     if commit:
         conn.commit()

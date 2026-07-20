@@ -115,8 +115,16 @@ def test_cache_solve_gates_on_solvable():
 def test_drain_solver_and_cache_solve_reject_the_same_spots():
     """[Q22] one gate, one answer — the two entry points cannot diverge.
 
-    Only the REJECTED spots are exercised: those return before solving, so this
-    stays cheap while still pinning that both paths consult the same gate.
+    DELIBERATE SPEC CHANGE (wave-3, team-lead ruling). This used to assert that
+    BOTH paths return None on a rejected spot. The drain now RAISES
+    `UnsolvableSpot` instead: every reason the gate refuses is structural, so a
+    refusal returned as a "miss" left the row queued forever while the session
+    report kept promising the operator that draining would move it.
+
+    The invariant Q22 actually protects is unchanged and still pinned here —
+    both paths consult the same gate and agree on WHICH spots are refused. Only
+    what each does with a refusal differs, because only one of them has a queue
+    row to close.
     """
     parsed, _ = _ante_hu()
     conn = db.connect()
@@ -125,9 +133,48 @@ def test_drain_solver_and_cache_solve_reject_the_same_spots():
     rejected = [d for d in extract_decisions(parsed) if not tier2.solvable(d)]
     assert rejected, "fixture should contain at least one non-solvable spot"
     for d in rejected:
-        assert solver("k", d) is None
+        with pytest.raises(tier2.UnsolvableSpot):
+            solver("k", d)
         assert tier2.cache_solve(conn, d, iters=20, cfg=FAST_CFG) is None
     assert conn.execute("SELECT COUNT(*) FROM solution_index").fetchone()[0] == 0
+
+
+def test_a_refused_spot_closes_the_row_as_unsolvable_not_failed():
+    """The distinction has to survive into the STORE, not just the return dict.
+
+    The report is a DB read, so 'unsolvable' (will not change without a solver
+    upgrade) and 'failed' (fix the bug and retry) must be different statuses or
+    the operator gets told a transient cause is permanent.
+    """
+    from pokerlab.hh.persist import drain_batch_queue, persist_session
+    from pokerlab.hh.population import load_population
+    from pokerlab.hh.report import grade_session
+
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    parsed = parse_pokerstars(raw)
+    conn = db.connect()
+    report = grade_session([parsed], population=load_population())
+    persist_session(conn, [parsed], report, graded_at=AT, raw_texts=[raw])
+
+    result = drain_batch_queue(
+        conn, tier2.make_drain_solver(conn, iters=20, cfg=FAST_CFG), graded_at=AT)
+    statuses = {r["status"] for r in db.batch_rows(conn)}
+
+    assert result["unsolvable"] >= 1, "the gate must refuse at least one fixture spot"
+    assert "unsolvable" in statuses
+    assert not [r for r in db.batch_rows(conn)
+                if r["status"] == "pending"], "a structural refusal must not stay queued"
+
+
+def test_every_terminal_status_is_reopenable():
+    """All three terminal causes stay escape-hatched via retry_failed_batch."""
+    conn = db.connect()
+    hid = db.insert_imported_hand(conn, "PokerStars", "r", "{}", AT, "uid-x")
+    for i, st in enumerate(("failed", "unsolvable", "mismatched")):
+        rid = db.enqueue_batch(conn, "k|flop", hid, i)
+        db.set_batch_status(conn, rid, st)
+    assert db.retry_failed_batch(conn) == 3
+    assert {r["status"] for r in db.batch_rows(conn)} == {"pending"}
 
 
 # --------------------------------------------------------------------------- #

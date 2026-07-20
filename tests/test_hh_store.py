@@ -103,7 +103,10 @@ def test_solver_miss_and_unsolvable_spot_are_different_outcomes() -> None:
 
     term = drain_batch_queue(conn, unsolvable, graded_at=AT)
     assert term["unsolvable"] == counts["queued"] and term["missed"] == 0
-    assert all(r["status"] == "failed" for r in db.batch_rows(conn))
+    # 'unsolvable', not 'failed' — the terminal CAUSE survives into the store,
+    # because the report reads the DB and the two need different operator
+    # guidance (wave-3).
+    assert all(r["status"] == "unsolvable" for r in db.batch_rows(conn))
 
 
 def test_leak_report_ranks_tiers_1_2_and_lists_tier3_separately() -> None:
@@ -319,7 +322,10 @@ def test_unsolvable_spot_is_terminal_and_counted_apart_from_errors() -> None:
     result = drain_batch_queue(conn, solver, graded_at=AT)
     assert result["unsolvable"] == counts["queued"]
     assert result["failed"] == 0 and result["missed"] == 0
-    assert all(r["status"] == "failed" for r in db.batch_rows(conn))
+    # 'unsolvable', NOT 'failed': the report is a DB read, and telling the
+    # operator a solver-upgrade-needed row is a fixable bug (or vice versa) is
+    # the conflation wave-3 split apart.
+    assert all(r["status"] == "unsolvable" for r in db.batch_rows(conn))
 
 
 def test_failed_rows_can_be_deliberately_reopened() -> None:
@@ -489,7 +495,7 @@ def test_drain_refuses_a_decision_that_is_not_the_one_queued() -> None:
 
     assert result["mismatched"] == 1
     assert next(r for r in db.batch_rows(conn)
-                if r["id"] == row["id"])["status"] == "failed"
+                if r["id"] == row["id"])["status"] == "mismatched"
     assert not [g for g in db.gradings(conn)
                 if g["hand_id"] == row["hand_id"]
                 and g["decision_idx"] == row["decision_idx"]]

@@ -105,5 +105,15 @@ CREATE TABLE IF NOT EXISTS batch_queue(
   spot_key TEXT NOT NULL,
   hand_id INTEGER NOT NULL,
   decision_idx INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed'))
+  -- Terminal causes are SEPARATE states, because they need separate operator
+  -- guidance and the report is a DB read (wave-3, w3-product-builder):
+  --   'failed'      a bug failed this row. Fix the bug, retry_failed_batch.
+  --   'unsolvable'  structurally outside what the solver models. Will not
+  --                 change without a solver upgrade -- not a transient fault.
+  --   'mismatched'  the queue no longer describes the hand (the re-derived
+  --                 decision is not the one queued, see hh/persist [B2]).
+  -- Collapsing these to 'failed' made the report call a transient cause
+  -- permanent. All three are reopenable via retry_failed_batch.
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'done', 'failed', 'unsolvable', 'mismatched'))
 );

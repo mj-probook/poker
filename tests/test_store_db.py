@@ -85,3 +85,69 @@ def test_tier1_grading_with_evloss_is_accepted():
                             chosen="jam", best="jam", ev_loss=0.0,
                             leak_key="SBjam|preflop|jam", graded_at="t")
     assert rid is not None
+
+
+# --------------------------------------------------------------------------- #
+# Wave-3: `CREATE TABLE IF NOT EXISTS` does nothing to a table that already
+# exists, so a pokerlab.db created before a schema change silently keeps the old
+# shape. For a nullable column that degrades a feature; for the [B3] uniqueness
+# rule it means the protection against double-grading a decision is absent on
+# exactly the databases that already hold real data.
+# --------------------------------------------------------------------------- #
+_OLD_SCHEMA = """
+CREATE TABLE imported_hands(id INTEGER PRIMARY KEY, site TEXT NOT NULL,
+  raw TEXT NOT NULL, parsed_json TEXT NOT NULL, imported_at TEXT NOT NULL,
+  hand_uid TEXT, UNIQUE(site, hand_uid));
+CREATE TABLE gradings(id INTEGER PRIMARY KEY,
+  hand_id INTEGER NOT NULL REFERENCES imported_hands(id),
+  decision_idx INTEGER NOT NULL, tier INTEGER NOT NULL, chosen TEXT NOT NULL,
+  best TEXT NOT NULL, ev_loss REAL, leak_key TEXT NOT NULL,
+  graded_at TEXT NOT NULL);
+"""
+
+
+def _legacy_db(path, *, duplicate=False):
+    """A database in the pre-wave-3 shape: no frequency/flags, no B3 uniqueness."""
+    c = sqlite3.connect(str(path))
+    c.executescript(_OLD_SCHEMA)
+    c.execute("INSERT INTO imported_hands VALUES(1,'PokerStars','r','{}','t','u1')")
+    if duplicate:
+        c.execute("INSERT INTO gradings VALUES(1,1,0,2,'bet','check',0.5,'k','t')")
+        c.execute("INSERT INTO gradings VALUES(2,1,0,2,'bet','check',0.5,'k','t')")
+    c.commit()
+    c.close()
+    return path
+
+
+def test_opening_a_legacy_db_adds_the_missing_columns(tmp_path):
+    p = _legacy_db(tmp_path / "old.db")
+    conn = db.connect(p)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(gradings)")}
+    assert {"frequency", "flags"} <= cols
+
+
+def test_opening_a_legacy_db_enforces_the_b3_rule(tmp_path):
+    """The constraint has to reach OLD databases — that is the whole point."""
+    p = _legacy_db(tmp_path / "old.db")
+    conn = db.connect(p)
+    db.insert_grading(conn, 1, 0, 2, "bet", "check", 0.5, "k", "t")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_grading(conn, 1, 0, 2, "bet", "check", 0.5, "k", "t")
+
+
+def test_opening_it_twice_is_idempotent(tmp_path):
+    p = _legacy_db(tmp_path / "old.db")
+    db.connect(p)
+    db.connect(p)  # must not raise on the second pass
+
+
+def test_a_legacy_db_that_already_double_graded_fails_loudly(tmp_path):
+    """Silently skipping would leave the corruption in place, unmentioned.
+
+    If the unique index cannot be created, this database already contains
+    duplicate gradings — which double-count into every leak statistic. That is
+    worth refusing to open over, with the query to inspect it.
+    """
+    p = _legacy_db(tmp_path / "dup.db", duplicate=True)
+    with pytest.raises(sqlite3.IntegrityError, match="DUPLICATE gradings"):
+        db.connect(p)
