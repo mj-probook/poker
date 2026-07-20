@@ -15,6 +15,25 @@ CREATE TABLE IF NOT EXISTS imported_hands(
   UNIQUE(site, hand_uid)
 );
 
+-- A hand that could not be parsed or replayed. PLAN §8 M4 promises these are
+-- "isolated in failed_hands and surfaced in the session summary — never
+-- silently dropped"; round-1 [8] delivered the isolation as an in-memory
+-- dataclass, which vanishes with the process. On the nightly-cron path nobody
+-- reads stdout, so by morning a failed hand left no trace at all.
+--
+-- Deliberately NOT in `imported_hands`: a failed hand must not claim its
+-- (site, hand_uid), or the dedup would make the failure permanent and the hand
+-- could never be re-imported once the parser is fixed (wave-2 [E16]/[E17]).
+-- That is also why `raw` is stored here — it is the whole re-import path.
+CREATE TABLE IF NOT EXISTS failed_hands(
+  id INTEGER PRIMARY KEY,
+  site TEXT NOT NULL,
+  hand_uid TEXT,                      -- site hand number IF the parse got that far
+  raw TEXT NOT NULL,                  -- re-import after a parser fix needs this
+  reason TEXT NOT NULL,               -- what went wrong, for the session summary
+  imported_at TEXT NOT NULL           -- groups one import batch
+);
+
 CREATE TABLE IF NOT EXISTS gradings(
   id INTEGER PRIMARY KEY,
   hand_id INTEGER NOT NULL REFERENCES imported_hands(id),

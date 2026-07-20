@@ -71,6 +71,11 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
     No migration framework — this is a single-user local tool and versioned
     migrations would be speculative infrastructure. Two idempotent statements.
     """
+    # A legacy DB predating the table gets it from `executescript` above
+    # (CREATE TABLE IF NOT EXISTS does create a MISSING table — it is only a
+    # no-op for one that already exists), so failed_hands needs no ALTER here.
+    # Asserted by test rather than assumed, since that asymmetry is exactly what
+    # made the column case need this function at all.
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(gradings)")}
     for name, decl in (("frequency", "REAL"), ("flags", "TEXT")):
         if name not in cols:
@@ -198,6 +203,55 @@ def gradings(conn: sqlite3.Connection) -> list[dict]:
 # imported_hands (Slice F: raw HH + parsed summary, so the batch worker can
 # re-derive a decision from storage when a solve finally lands)
 # --------------------------------------------------------------------------- #
+def insert_failed_hand(conn: sqlite3.Connection, site: str, raw: str,
+                       reason: str, imported_at: str,
+                       hand_uid: str | None = None, *,
+                       commit: bool = True) -> int:
+    """Record a hand that could not be parsed or replayed; return its id.
+
+    Kept OUT of `imported_hands` on purpose: a failed hand must not claim its
+    (site, hand_uid), or dedup would make the failure permanent and the hand
+    could never be re-imported after a parser fix (wave-2 [E16]/[E17]).
+    """
+    cur = conn.execute(
+        "INSERT INTO failed_hands(site, hand_uid, raw, reason, imported_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (site, hand_uid or None, raw, reason, imported_at),
+    )
+    if commit:
+        conn.commit()
+    return int(cur.lastrowid)
+
+
+def clear_failed_hand(conn: sqlite3.Connection, site: str, raw: str, *,
+                      commit: bool = True) -> int:
+    """Drop any recorded failure for this exact hand text; return rows removed.
+
+    Called when the same hand imports SUCCESSFULLY, which is what happens once
+    the parser bug is fixed and the file is re-imported. Without it the failure
+    count would keep reporting a hand that now grades fine — the table would
+    answer "what is broken" with "what was ever broken", and the summary it
+    exists to feed would be permanently wrong.
+    """
+    cur = conn.execute(
+        "DELETE FROM failed_hands WHERE site=? AND raw=?", (site, raw))
+    if commit:
+        conn.commit()
+    return int(cur.rowcount)
+
+
+def failed_hands(conn: sqlite3.Connection,
+                 imported_at: str | None = None) -> list[dict]:
+    """Recorded failures, newest first; optionally one import batch."""
+    if imported_at is None:
+        rows = conn.execute("SELECT * FROM failed_hands ORDER BY id DESC")
+    else:
+        rows = conn.execute(
+            "SELECT * FROM failed_hands WHERE imported_at=? ORDER BY id DESC",
+            (imported_at,))
+    return [dict(r) for r in rows]
+
+
 def insert_imported_hand(conn: sqlite3.Connection, site: str, raw: str,
                          parsed_json: str, imported_at: str,
                          hand_uid: str | None = None, *,

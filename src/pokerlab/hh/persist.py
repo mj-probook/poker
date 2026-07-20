@@ -110,9 +110,11 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
     gradings, so re-importing a file never double-counts into the leak stats
     (round-1 finding [11]).
 
-    Hands the grader could not process (`report.failed_hands`) are NOT written
-    at all — importantly they do not claim their `(site, hand_uid)`, so once the
-    parser bug that broke them is fixed, re-importing the file picks them up.
+    Hands the grader could not process (`report.failed_hands`) are recorded in
+    `failed_hands` — durably, because the in-memory report vanishes with the
+    process and nobody reads stdout on the nightly-cron path. They are NOT
+    written to `imported_hands`, so they do not claim their `(site, hand_uid)`
+    and re-importing the file picks them up once the parser bug is fixed.
     Writing them would have made the dedup permanent (wave-2 [E16]). A hand
     that failed only *some* of its decisions is dropped whole for the same
     reason: it stays re-importable, rather than contributing partial stats that
@@ -123,12 +125,26 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
     failed_idx = {fh.hand_index for fh in report.failed_hands}
     n_failed = len(failed_idx)
     try:
+        reasons = {fh.hand_index: fh.reason for fh in report.failed_hands}
         hand_ids: list[int | None] = []
         for i, ph in enumerate(parsed_hands):
+            raw = raw_texts[i] if raw_texts is not None else ""
             if i in failed_idx:
+                # DURABLE record of the failure. The in-memory SessionReport
+                # surface still carries it for the CLI, but stdout is never read
+                # on the nightly-cron path, so a failure that lived only there
+                # was invisible by morning (PLAN §8 M4 promises otherwise).
+                # Still NOT written to imported_hands: the hand must not claim
+                # its (site, hand_uid) or it could never be re-imported once the
+                # parser is fixed (wave-2 [E16]/[E17]).
+                db.insert_failed_hand(conn, ph.site, raw, reasons[i], graded_at,
+                                      ph.hand_id, commit=False)
                 hand_ids.append(None)
                 continue
-            raw = raw_texts[i] if raw_texts is not None else ""
+            # This hand parses now. If a previous import recorded it as failed,
+            # that record is stale the moment it grades — clear it, or the
+            # summary keeps reporting a hand that is fixed.
+            db.clear_failed_hand(conn, ph.site, raw, commit=False)
             hid = db.insert_imported_hand(
                 conn, ph.site, raw, _summary_json(ph), graded_at,
                 ph.hand_id, commit=False)
@@ -180,6 +196,15 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
     return {"imported": sum(h is not None for h in hand_ids),
             "graded": n_graded, "queued": n_queued, "skipped": n_skipped,
             "failed": n_failed, "seeded": len(seeded)}
+
+
+def failed_hand_report(conn, imported_at: str | None = None) -> list[dict]:
+    """Recorded parse/replay failures — the durable half of the M4 promise.
+
+    Thin pass-through so a report surface never has to reach into `store`
+    directly for it. Newest first; pass ``imported_at`` for one import batch.
+    """
+    return db.failed_hands(conn, imported_at)
 
 
 def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:
