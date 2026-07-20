@@ -13,8 +13,18 @@ from __future__ import annotations
 
 import re
 
-from pokerlab.hh._common import parse_hand
+from pokerlab.hh._common import parse_hand, split_hands
 from pokerlab.hh.model import ParsedHand
+
+# See pokerstars.BOUNDARY. GGPoker shares `_common.parse_hand`, so it shared the
+# single-hand defect (round-4 finding [R2']) and is fixed on the same code path
+# rather than deferred — Pokercraft exports are session files too.
+#
+# No collision with PokerStars' prefix despite the shared word: "PokerStars Hand
+# #" does not start with "Poker Hand #". `detect_site` routes on the same two
+# literals, so a file reaching this parser splits on this boundary by
+# construction.
+BOUNDARY = "Poker Hand #"
 
 _HEADER = re.compile(
     r"Poker Hand #(?P<hid>\w+): Tournament #(?P<tid>\d+),.*?"
@@ -23,4 +33,16 @@ _HEADER = re.compile(
 
 
 def parse_ggpoker(text: str) -> ParsedHand:
-    return parse_hand(text, site="GGPoker", header_re=_HEADER)
+    """Parse exactly ONE hand. Raises if handed a multi-hand session file."""
+    return parse_hand(text, site="GGPoker", header_re=_HEADER,
+                      boundary=BOUNDARY)
+
+
+def split_ggpoker(text: str) -> list[str]:
+    """Session file -> one raw chunk per hand (no parsing, no validation)."""
+    return split_hands(text, BOUNDARY)
+
+
+def parse_ggpoker_file(text: str) -> list[ParsedHand]:
+    """Every hand in a session file. See `pokerstars.parse_pokerstars_file`."""
+    return [parse_ggpoker(c) for c in split_ggpoker(text)]

@@ -203,8 +203,47 @@ def _button_index(seat_nos: list[int], button_seat: int) -> int:
     return seat_nos.index(max(earlier) if earlier else max(seat_nos))
 
 
-def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
+def split_hands(text: str, boundary: str) -> list[str]:
+    """Split a session file into one chunk per hand (round-4 finding [R2']).
+
+    `boundary` is the site's hand-header PREFIX ("PokerStars Hand #"), not its
+    full header regex, and that distinction is load-bearing: a hand whose
+    header is malformed still starts a chunk, so it can be isolated and
+    recorded as a failed hand. Splitting on the strict header instead would
+    silently glue a corrupt hand onto its predecessor — reintroducing the very
+    merge this exists to fix, in the case least likely to be noticed.
+
+    Leading text before the first boundary (a client preamble, or junk) is
+    returned as its own chunk rather than dropped: the caller isolates and
+    records it, and discarding unparseable input is what plan §8 forbids.
+    """
+    if not text.strip():
+        return []
+    lines = text.splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(boundary)]
+    if not starts:
+        return [text]
+    bounds = ([0] if starts[0] != 0 else []) + starts + [len(lines)]
+    chunks = ["\n".join(lines[a:b]) for a, b in zip(bounds, bounds[1:])]
+    return [c for c in chunks if c.strip()]
+
+
+def parse_hand(text: str, *, site: str, header_re: re.Pattern,
+               boundary: str | None = None) -> ParsedHand:
     lines = [ln.rstrip("\n") for ln in text.strip().splitlines()]
+
+    # Reject plural input rather than merging it (round-4 finding [R2']).
+    # Pre-fix, a 2-hand file matched the header on line 0 and then ran the body
+    # grammar over every subsequent hand's lines too, returning ONE hand with
+    # the first hand's id and all 21 actions — no exception raised. Adding a
+    # plural entry point alone would have left that trap armed for every
+    # existing caller, so the singular contract is enforced where it is stated.
+    if boundary is not None:
+        n = sum(1 for ln in lines if ln.startswith(boundary))
+        if n > 1:
+            raise ValueError(
+                f"{site}: expected a single hand, got {n} hands — "
+                f"use the file-level parser to split a session file")
 
     m = header_re.search(lines[0])
     if not m:

@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import re
 
-from pokerlab.hh._common import parse_hand
+from pokerlab.hh._common import parse_hand, split_hands
 from pokerlab.hh.model import ParsedHand
+
+# The hand-header prefix, used to split session files into per-hand chunks.
+# Deliberately looser than `_HEADER`: a hand with a malformed header must still
+# start its own chunk so it can be isolated and recorded, rather than glued
+# onto its predecessor (round-4 finding [R2']). Same literal `detect_site`
+# sniffs for, and the two must agree — a file we route to this parser is a file
+# we can split.
+BOUNDARY = "PokerStars Hand #"
 
 _HEADER = re.compile(
     r"PokerStars Hand #(?P<hid>\d+): Tournament #(?P<tid>\d+),.*?"
@@ -18,4 +26,22 @@ _HEADER = re.compile(
 
 
 def parse_pokerstars(text: str) -> ParsedHand:
-    return parse_hand(text, site="PokerStars", header_re=_HEADER)
+    """Parse exactly ONE hand. Raises if handed a multi-hand session file."""
+    return parse_hand(text, site="PokerStars", header_re=_HEADER,
+                      boundary=BOUNDARY)
+
+
+def split_pokerstars(text: str) -> list[str]:
+    """Session file -> one raw chunk per hand (no parsing, no validation)."""
+    return split_hands(text, BOUNDARY)
+
+
+def parse_pokerstars_file(text: str) -> list[ParsedHand]:
+    """Every hand in a session file (plan §5.3: auto-saved local files).
+
+    Raises on the first unparseable chunk. Callers that must not lose the good
+    hands to one bad one — the CLI import path — split with `split_pokerstars`
+    and isolate per chunk themselves; that machinery already exists and this
+    does not duplicate it.
+    """
+    return [parse_pokerstars(c) for c in split_pokerstars(text)]

@@ -17,10 +17,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pokerlab.hh.ggpoker import parse_ggpoker
+from pokerlab.hh.ggpoker import parse_ggpoker, split_ggpoker
 from pokerlab.hh.model import ParsedHand
 from pokerlab.hh.persist import drain_batch_queue, persist_session
-from pokerlab.hh.pokerstars import parse_pokerstars
+from pokerlab.hh.pokerstars import parse_pokerstars, split_pokerstars
 from pokerlab.hh.population import load_population
 from pokerlab.hh.report import grade_session
 from pokerlab.spike import tier2
@@ -45,6 +45,9 @@ def detect_site(raw: str) -> str | None:
 
 
 _PARSERS = {"PokerStars": parse_pokerstars, "GGPoker": parse_ggpoker}
+# Keyed by the same site names `detect_site` returns, so routing and splitting
+# cannot disagree about what a file is (round-4 finding [R2']).
+_SPLITTERS = {"PokerStars": split_pokerstars, "GGPoker": split_ggpoker}
 
 
 def _read_hands(paths: list[str]
@@ -81,13 +84,30 @@ def _read_hands(paths: list[str]
         if site is None:
             problems.append(f"{name}: unrecognized hand-history format")
             continue
-        try:
-            parsed.append(_PARSERS[site](raw))
-            raws.append(raw)
-        except Exception as exc:  # noqa: BLE001 - per-file isolation boundary
-            reason = f"{type(exc).__name__}: {exc}"
-            problems.append(f"{name}: {reason}")
-            lost.append((site, raw, reason))
+        # Split first: a real auto-saved file holds hundreds of hands, and
+        # parsing it as one hand merged them all into the first hand's record
+        # (round-4 finding [R2']). Isolation moves from per-FILE to per-HAND —
+        # the machinery below is unchanged and was always right, it was just
+        # being fed one giant hand.
+        chunks = _SPLITTERS[site](raw)
+        for i, chunk in enumerate(chunks, 1):
+            where = name if len(chunks) == 1 else f"{name} hand {i}/{len(chunks)}"
+            try:
+                parsed.append(_PARSERS[site](chunk))
+                # The CHUNK, not the file: `raws` is the per-hand re-import
+                # payload and the dedup key's source. Storing the whole session
+                # under every hand would make one bad hand un-re-importable
+                # without re-importing all of them.
+                raws.append(chunk)
+            except Exception as exc:  # noqa: BLE001 - per-hand isolation boundary
+                reason = f"{type(exc).__name__}: {exc}"
+                problems.append(f"{where}: {reason}")
+                # A header-level failure now reaches `failed_hands` instead of
+                # dying on stdout (round-4 finding [P2]): it is a chunk of a
+                # recognized site's file, so `site` is known and the row is
+                # honest — no invented "unknown" site is needed, because a file
+                # we cannot attribute never gets here (see `detect_site` above).
+                lost.append((site, chunk, reason))
     return parsed, raws, problems, lost
 
 
