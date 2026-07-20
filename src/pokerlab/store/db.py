@@ -219,6 +219,16 @@ def gradings(conn: sqlite3.Connection) -> list[dict]:
 # imported_hands (Slice F: raw HH + parsed summary, so the batch worker can
 # re-derive a decision from storage when a solve finally lands)
 # --------------------------------------------------------------------------- #
+# `hand_uid` is positional-with-default, and stays that way DELIBERATELY.
+# Making it keyword-only was proposed to close the affordance [R1b] fixed (a
+# caller omitting the uid it had). It would not: keyword-only KEEPS the default,
+# so omission stays legal — it prevents positional mis-binding, which has never
+# happened here, while leaving the failure that has. The change that would
+# actually close it is making the argument REQUIRED, and that belongs on this
+# function AND `insert_imported_hand` together: they are twins, same shape, same
+# uid position, called adjacently in persist_session. Changing one alone would
+# manufacture the mis-bind hazard it was meant to prevent. Recorded as an open
+# option; the trigger to take it is a second omission bug, not a preference.
 def insert_failed_hand(conn: sqlite3.Connection, site: str, raw: str,
                        reason: str, imported_at: str,
                        hand_uid: str | None = None, *,
@@ -237,6 +247,18 @@ def insert_failed_hand(conn: sqlite3.Connection, site: str, raw: str,
     mutation gate). The LATEST attempt wins on every field: the table answers
     "what is broken now", so a reason that changes under a parser tweak should
     refresh rather than leave the first-ever message frozen in place.
+
+    That upsert also SELF-HEALS identity, but only within a stated scope: a row
+    written before [R1b] taught the importer to name a hand from its header
+    carries a NULL `hand_uid`, and the next import that does know the number
+    fills it IN PLACE. The scope is rows written AFTER 1d80de9, whose `raw` is
+    one chunk. A pre-1d80de9 row holds a whole multi-hand file as `raw`, which
+    no chunk equals, so it matches nothing: it is inert to correction here for
+    the same reason it is inert to clearing (see the boundary on
+    `clear_failed_hand`). Both were verified against a hand-built row rather
+    than reasoned about — naming and clearing key on the same `(site, raw)`, so
+    they succeed and fail together, and a claim that this heals "old rows"
+    would be true only of the ones that were never the problem.
     """
     cur = conn.execute(
         "INSERT INTO failed_hands(site, hand_uid, raw, reason, imported_at)"
@@ -272,6 +294,13 @@ def clear_failed_hand(conn: sqlite3.Connection, site: str, raw: str, *,
     have produced one spans a few hours of the same day); writing migration
     code for zero rows is the speculative-infrastructure rule exactly. If such
     a database ever surfaces, the remedy is manual deletion of the stale row.
+
+    The boundary covers NAMING as well as clearing, which is easy to miss
+    because they live in different functions: [R1b] made the importer recover a
+    hand's number from its header, and `insert_failed_hand`'s upsert fills that
+    number into an existing row. Both match on `(site, raw)`. So a pre-1d80de9
+    row is not merely un-clearable — it can never be named either, and stays
+    "unidentified" in the report permanently. One boundary, two symptoms.
     """
     cur = conn.execute(
         "DELETE FROM failed_hands WHERE site=? AND raw=?", (site, raw))

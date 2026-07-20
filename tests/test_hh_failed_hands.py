@@ -293,3 +293,44 @@ def test_a_multi_hand_pre_split_row_is_a_known_boundary():
     for c in chunks:                      # a full successful re-import
         db.clear_failed_hand(conn, "PokerStars", c)
     assert len(db.failed_hands(conn)) == 1, "the boundary: still orphaned"
+
+
+def test_a_pre_split_row_can_never_be_named_either():
+    """The other half of the [R2'] boundary, and the easier half to miss.
+
+    [R1b] recovers a hand's number from its header, and the upsert fills that
+    number into an existing row — self-healing for rows recorded before the
+    importer could name them. But naming matches on `(site, raw)`, the same key
+    clearing uses, so it inherits the same boundary: a pre-1d80de9 row holding a
+    whole multi-hand file matches no chunk and is inert to BOTH. It stays
+    "unidentified" in the report permanently, not just uncleared.
+
+    Pinned separately from the clearing case because the two live in different
+    functions, so a reader can fix one and believe they have fixed both.
+    """
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    whole = (FIXTURES / "ps_session_multi.txt").read_text()
+    chunk = split_pokerstars(whole)[0]
+
+    conn = db.connect()
+    db.insert_failed_hand(conn, "PokerStars", whole, "legacy", AT)   # pre-split
+    # a later import that DOES know the number re-records the hand it can see
+    db.insert_failed_hand(conn, "PokerStars", chunk, "boom", LATER, "240000000001")
+
+    legacy = [r for r in db.failed_hands(conn) if r["raw"] == whole]
+    assert len(legacy) == 1
+    assert legacy[0]["hand_uid"] is None, "the boundary: inert to naming too"
+
+
+def test_a_post_split_row_IS_named_by_a_later_import():
+    """The self-healing that DOES work, so the boundary above reads as a limit."""
+    conn = db.connect()
+    raw = (FIXTURES / "ps_preflop_fold.txt").read_text()
+    db.insert_failed_hand(conn, "PokerStars", raw, "boom", AT)
+    assert db.failed_hands(conn)[0]["hand_uid"] is None
+
+    db.insert_failed_hand(conn, "PokerStars", raw, "boom", LATER, "240000000001")
+    rows = db.failed_hands(conn)
+    assert len(rows) == 1, "still one row"
+    assert rows[0]["hand_uid"] == "240000000001", "named in place"
