@@ -41,15 +41,37 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 #     re-draining re-derives the same wrong spot and fails identically. This is
 #     the one where "retry" is actively the WRONG advice.
 #   * failed     — a bug took the row down; fixing it makes a retry work.
-# Keyed by `db.BATCH_STATUSES` members; the terminal set is derived from that
-# frozenset (never restated), and a test pins that every terminal status has
-# copy here — so a new cause surfaces loudly instead of vanishing from the page.
+# Keyed by `db.TERMINAL_STATUSES` — the store owns the vocabulary, this owns
+# only the operator-facing copy. A test pins that the two agree, so a new
+# terminal cause surfaces loudly instead of vanishing from the page.
 TERMINAL_ACTIONS: dict[str, str] = {
     "unsolvable": "will not change without a solver upgrade",
     "mismatched": "re-import these hands — the queue no longer describes them",
     "failed": "a bug stopped these rows — fix it, then retry the batch",
 }
+# Work that will still be attempted. Stated positively rather than as
+# "everything that is not terminal or done": a future in-flight status must
+# count as backlog here, and subtraction would silently file it as terminal.
 _IN_FLIGHT = ("pending", "running")
+
+# What a drill kind's ev_loss is DENOMINATED in (round-3 finding [P7']).
+#
+# A separate axis from `tier`/`tier_label`, deliberately. ICM drills are just
+# as tier-1 chart-graded as chip-EV ones — same in-house engine, same exact
+# solve — but their payoffs are ICM-$ deltas, not bb. Folding units into the
+# tier vocabulary would let a future drill kind inherit one claim by asserting
+# the other; they vary independently, so they are stated independently.
+#
+# Reporting a $-delta with a "bb" suffix was not cosmetic: the magnitudes are
+# ~25x apart (1bb = 25$ on the bubble fixture), so an ICM ev_loss of 100 read
+# as a catastrophic 100bb error rather than the $100 of a 1000$ pool that it
+# is. Keyed by `Drill.kind`; a test pins that every kind the generator emits
+# has an entry, so a new kind surfaces loudly instead of silently formatting
+# as bb.
+EV_UNITS: dict[str, str] = {
+    "jamfold": "bb",
+    "icm": "ICM-$",
+}
 
 
 class Answer(BaseModel):
@@ -69,6 +91,9 @@ def _spot_json(drill: gen.Drill) -> dict:
         # inherit a "chart-graded" claim.
         "tier": TIER_CHART,
         "tier_label": TIER_LABELS[TIER_CHART],
+        # Independent of tier — see EV_UNITS. Carried on the spot as well as on
+        # the answer so the page can label the stakes before the user commits.
+        "ev_unit": EV_UNITS[drill.kind],
         "position": drill.position,
         "depth_bb": drill.depth_bb,
         "hand": drill.hand_label,
@@ -85,11 +110,17 @@ def _spot_json(drill: gen.Drill) -> dict:
     }
 
 
-def _explain(result, action: str) -> str:
+def _explain(result, action: str, unit: str) -> str:
+    """Feedback line. `unit` names what the EV loss is denominated in.
+
+    The unit is passed in rather than hardcoded (round-3 finding [P7']): this
+    string said "bb" for every drill kind, including ICM drills whose ev_loss
+    is a $-delta ~25x larger per unit. See EV_UNITS.
+    """
     verdict = "Correct" if result.correct else "Incorrect"
     return (f"{verdict}. Chart plays {result.best_action} here — you chose "
             f"{action} (freq {result.chosen_frequency:.0%}, "
-            f"EV loss {result.ev_loss_bb:.2f}bb).")
+            f"EV loss {result.ev_loss_bb:.2f}{unit}).")
 
 
 def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
@@ -128,7 +159,11 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             if ans.drill_id == last["drill_id"]:
                 return last["response"]          # type: ignore[return-value]
             try:
-                result = score(drill.solution, ans.action, drill.pot_bb)
+                # bb_value converts the decision-ε into the drill's own payoff
+                # currency ([P7']); it is 1.0 for chip-EV and the average chip
+                # value for ICM. Without it ICM was graded exact-argmax.
+                result = score(drill.solution, ans.action, drill.pot_bb,
+                               bb_value=drill.bb_value)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             now = datetime.now(timezone.utc)
@@ -139,10 +174,14 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             payload = {
                 "drill_id": drill.drill_id,
                 "correct": result.correct,
-                "ev_loss_bb": result.ev_loss_bb,
+                # `ev_loss` + `ev_unit`, not `ev_loss_bb`: the old key asserted
+                # the unit in its NAME, which was false for ICM drills. A field
+                # name is a claim like any other ([P7']).
+                "ev_loss": result.ev_loss_bb,
+                "ev_unit": EV_UNITS[drill.kind],
                 "best_action": result.best_action,
                 "chosen_frequency": result.chosen_frequency,
-                "explanation": _explain(result, ans.action),
+                "explanation": _explain(result, ans.action, EV_UNITS[drill.kind]),
             }
             last["drill_id"], last["response"] = ans.drill_id, payload
             return payload
@@ -173,11 +212,12 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             session["partial"] = session["queued"] > 0
             # Terminal rows are not backlog, but they are not nothing either:
             # each is reported with the action that actually clears it.
+            marks = ",".join("?" * len(db.TERMINAL_STATUSES))
             blocked = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM batch_queue"
-                " WHERE status NOT IN (?, ?, 'done')"
+                f" WHERE status IN ({marks})"
                 " GROUP BY status ORDER BY count DESC, status",
-                _IN_FLIGHT,
+                db.TERMINAL_STATUSES,
             )
             session["blocked"] = [
                 dict(r) | {"action": TERMINAL_ACTIONS[r["status"]]}

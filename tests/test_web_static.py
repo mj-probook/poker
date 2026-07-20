@@ -7,6 +7,8 @@ front end and back end agree.
 
 from pathlib import Path
 
+import pytest
+
 import pokerlab.web.app as webapp
 
 STATIC = Path(webapp.__file__).resolve().parent / "static"
@@ -46,3 +48,59 @@ def test_app_js_checks_response_status_before_rendering():
     assert js.count("res.ok") >= 2, "both fetches must check response status"
     # the server's error payload is what gets shown, not `undefined`
     assert "detail" in js
+
+
+def test_app_js_renders_the_payout_ladder():
+    """[P8'] An ICM spot is unanswerable without the prize ladder.
+
+    The payload has carried `payouts` all along and the page dropped it,
+    rendering only "N left" and the stacks. Identical stacks play completely
+    differently on a flat ladder versus a top-heavy one — that shape is what
+    ICM prices, and the answer key uses it — so withholding it asked the user
+    to solve for information the drill was holding back.
+    """
+    js = (STATIC / "app.js").read_text()
+    assert "payouts" in js, "app.js never reads tc.payouts"
+    assert "ordinal" in js, "ladder places are not rendered as 1st/2nd/3rd"
+
+
+def test_ordinal_helper_is_correct_including_the_11_to_13_irregulars():
+    """Executes the shipped helper rather than grepping for digits.
+
+    A substring check ("11" in js) would pass on any file containing those
+    characters anywhere — it asserts nothing about behaviour. Running the real
+    function is the only way to catch `11st`, the bug every naive
+    `n % 10` ordinal has. Skipped, loudly, where node is unavailable: a check
+    that cannot run should say so rather than silently report green (the
+    round-2 [E52] lesson).
+    """
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available to execute the shipped JS")
+
+    # Extract just the helper: app.js touches `document` at module scope, so
+    # the whole file cannot be evaluated headlessly, and restructuring shipped
+    # code to suit a test is the wrong trade.
+    js = (STATIC / "app.js").read_text()
+    start = js.index("function ordinal(")
+    depth, end = 0, None
+    for i in range(js.index("{", start), len(js)):
+        depth += (js[i] == "{") - (js[i] == "}")
+        if depth == 0:
+            end = i + 1
+            break
+    assert end is not None, "could not delimit the ordinal() helper"
+    helper = js[start:end]
+
+    cases = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111, 112]
+    expected = ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st",
+                "22nd", "23rd", "101st", "111th", "112th"]
+    script = f"{helper}\nconsole.log(JSON.stringify({cases}.map(ordinal)));"
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True,
+                         timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout.strip().splitlines()[-1]) == expected

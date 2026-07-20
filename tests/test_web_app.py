@@ -77,7 +77,10 @@ def test_answer_incorrect_reports_ev_loss(client):
                     json={"drill_id": "SBjam|preflop|jam|10:AA", "action": "fold"})
     body = r.json()
     assert body["correct"] is False
-    assert body["ev_loss_bb"] > 0
+    # `ev_loss` + `ev_unit`, not `ev_loss_bb`: the old key asserted the unit in
+    # its NAME, which was false for ICM drills ([P7']).
+    assert body["ev_loss"] > 0
+    assert body["ev_unit"] == "bb"          # this one IS a chip-EV drill
     assert body["best_action"] == "jam"
 
 
@@ -176,3 +179,85 @@ def test_one_category_driven_past_the_old_overflow_point(client):
         (cat,)).fetchone()
     assert reps == 30                                # all 30 counted
     assert interval <= 365.0 and ef <= 3.0           # both ceilings held
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 finding [P7']: the feedback line reported every drill's EV loss with
+# a "bb" suffix, including ICM drills whose ev_loss is an ICM-$ delta ~25x
+# larger per unit. An ICM loss of 100 read as a catastrophic 100bb error rather
+# than the $100 of a 1000$ pool that it is.
+# --------------------------------------------------------------------------- #
+def test_icm_feedback_is_labelled_in_icm_dollars_not_bb(client):
+    from pokerlab.drills import generator as gen
+
+    icm = gen.icm_drills()[0]
+    r = client.post("/api/drill/answer",
+                    json={"drill_id": icm.drill_id, "action": "fold"})
+    body = r.json()
+    assert body["ev_unit"] == "ICM-$"
+    assert "ICM-$" in body["explanation"]
+    assert "bb)" not in body["explanation"], "ICM loss still labelled as bb"
+
+
+def test_chip_ev_feedback_is_still_labelled_in_bb(client):
+    """Guards the test above from 'fixing' the label by relabelling everything."""
+    r = client.post("/api/drill/answer",
+                    json={"drill_id": "SBjam|preflop|jam|10:AA", "action": "fold"})
+    body = r.json()
+    assert body["ev_unit"] == "bb"
+    assert "bb)" in body["explanation"] and "ICM-$" not in body["explanation"]
+
+
+def test_every_drill_kind_has_a_declared_ev_unit():
+    """A new drill kind must surface loudly, not silently format as bb.
+
+    Mirrors the builder's TERMINAL_ACTIONS/BATCH_STATUSES pin: the generator
+    owns the kind vocabulary, app.py owns only the operator-facing copy, and
+    this asserts the two agree.
+    """
+    from pokerlab.drills import generator as gen
+    from pokerlab.web.app import EV_UNITS
+
+    kinds = {d.kind for d in gen.default_population()}
+    assert kinds <= set(EV_UNITS), f"drill kinds with no declared unit: {kinds - set(EV_UNITS)}"
+
+
+def test_units_and_tier_are_independent_axes(client):
+    """ICM drills are tier-1 chart-graded AND denominated in $; both, not either.
+
+    Folding units into the tier vocabulary would let a future drill kind
+    inherit one claim by asserting the other.
+    """
+    from pokerlab.drills import generator as gen
+
+    icm = gen.icm_drills()[0]
+    for _ in range(200):
+        spot = client.get("/api/drill/next").json()
+        if spot["kind"] == "icm":
+            assert spot["tier"] == 1                    # unchanged by [P7']
+            assert spot["ev_unit"] == "ICM-$"           # but the unit differs
+            return
+        client.post("/api/drill/answer",
+                    json={"drill_id": spot["drill_id"],
+                          "action": spot["legal_actions"][0]})
+    raise AssertionError("scheduler never served an ICM spot")
+
+
+def test_the_route_grades_icm_in_icm_dollars_not_just_labels_it(client):
+    """The ROUTE must pass the conversion, not merely name the unit.
+
+    Labelling and grading are separate wires and only one of them was visible
+    in the feedback string: with `bb_value` dropped at the call site the
+    explanation still reads "ICM-$" while the verdict silently reverts to
+    exact-argmax. Every other test here passed with that wire cut, so this
+    pins the wire itself -- a spot 0.37 ICM-$ off the best action, which is
+    inside the converted eps of 2.50 and far outside the unconverted 0.10.
+    """
+    r = client.post("/api/drill/answer",
+                    json={"drill_id": "BBcall.icm|preflop|call|10:A7s",
+                          "action": "fold"})
+    body = r.json()
+    assert body["ev_loss"] == pytest.approx(0.37, abs=0.01)
+    assert body["correct"] is True, (
+        "a 0.37 ICM-$ deviation was graded wrong — the route is comparing a "
+        "$-delta against the unconverted bb epsilon")

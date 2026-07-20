@@ -36,13 +36,27 @@ async function loadNext() {
   render(spot);
 }
 
+// 1st/2nd/3rd/4th... 11-13 are the irregular cases ("11th", not "11st").
+function ordinal(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${{ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"}`;
+}
+
 function render(spot) {
   document.getElementById("description").textContent = spot.description;
   document.getElementById("meta").textContent =
     `${spot.position} · ${spot.depth_bb}bb · pot ${spot.pot_bb}bb`;
   const tc = spot.tournament;
+  // The payout ladder is part of the QUESTION, not decoration (wave-3 [P8']).
+  // An ICM spot is unanswerable without it: identical stacks play completely
+  // differently on a flat ladder versus a top-heavy one, because what ICM
+  // prices is the $ shape of the prizes. Showing "4 left" and the stacks while
+  // withholding the payouts asked the user to solve for information the drill
+  // was holding back — and the answer key uses it.
   document.getElementById("tournament").textContent = tc
-    ? `ICM · ${tc.players_remaining} left · stacks ${tc.stacks_all.join("/")}`
+    ? `ICM · ${tc.players_remaining} left · stacks ${tc.stacks_all.join("/")}` +
+      ` · pays ${tc.payouts.map((p, i) => `${ordinal(i + 1)} ${p}`).join(" / ")}`
     : "";
   const box = document.getElementById("actions");
   box.innerHTML = "";
