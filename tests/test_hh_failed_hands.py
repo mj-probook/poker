@@ -162,3 +162,106 @@ def test_a_legacy_db_gains_the_failed_hands_table(tmp_path):
     conn = db.connect(p)
     db.insert_failed_hand(conn, "PokerStars", "raw", "why", AT)
     assert len(db.failed_hands(conn)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Round-4: recording a failure must be IDEMPOTENT.
+#
+# Found by the [R2'] mutation gate, not by these tests as first written — they
+# covered clearing but never repeat-import, so a nightly cron re-importing the
+# same broken file grew one row per night. Recorded here because the mutation
+# checks passed while this was live: mutations prove a test is ATTACHED to the
+# behavior, not that it COVERS the property space. Separate verifications.
+# --------------------------------------------------------------------------- #
+def test_reimporting_a_still_broken_hand_does_not_duplicate():
+    """The cron case: the same bad hand, every night, forever.
+
+    The report surface counts rows, so duplication makes one unchanged broken
+    hand read as a worsening problem.
+    """
+    conn = db.connect()
+    for at in (AT, LATER, "2026-07-21T00:00:00"):
+        _session_with_one_broken_hand(conn, graded_at=at)
+    assert len(failed_hand_report(conn)) == 1
+
+
+def test_a_repeat_import_refreshes_rather_than_stacks():
+    """The table answers "what is broken NOW", so the latest attempt wins."""
+    conn = db.connect()
+    raw = (FIXTURES / "ps_preflop_fold.txt").read_text()
+    db.insert_failed_hand(conn, "PokerStars", raw, "old reason", AT)
+    db.insert_failed_hand(conn, "PokerStars", raw, "new reason", LATER)
+
+    rows = db.failed_hands(conn)
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "new reason"
+    assert rows[0]["imported_at"] == LATER, "the batch stamp must move too"
+
+
+def test_two_different_hands_are_still_two_rows():
+    """The dedup key must not collapse genuinely distinct failures."""
+    conn = db.connect()
+    a = (FIXTURES / "ps_preflop_fold.txt").read_text()
+    b = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    db.insert_failed_hand(conn, "PokerStars", a, "r", AT)
+    db.insert_failed_hand(conn, "PokerStars", b, "r", AT)
+    assert len(db.failed_hands(conn)) == 2
+
+
+def test_a_db_holding_duplicates_upgrades_cleanly(tmp_path):
+    """A DB written before the constraint existed must still open.
+
+    Unlike the duplicate-GRADINGS case, collapsing is safe here and refusing
+    would be wrong: the rows are identical by key and keeping the newest IS the
+    semantics being adopted, so there is nothing to lose and nothing to ask.
+    """
+    p = tmp_path / "dupes.db"
+    conn = db.connect(p)
+    conn.executescript("DROP INDEX IF EXISTS failed_hands_site_raw_uq;")
+    for at in (AT, LATER):
+        conn.execute(
+            "INSERT INTO failed_hands(site, hand_uid, raw, reason, imported_at)"
+            " VALUES ('PokerStars', NULL, 'same raw', ?, ?)", ("why", at))
+    conn.commit()
+    conn.close()
+
+    conn = db.connect(p)          # must not raise
+    rows = db.failed_hands(conn)
+    assert len(rows) == 1
+    assert rows[0]["imported_at"] == LATER, "collapse must keep the NEWEST"
+
+
+def test_a_whole_file_failure_row_clears_after_a_chunked_reimport():
+    """The [R2'] seam, guarded from the STORE side.
+
+    Before 1d80de9 the importer stored the WHOLE FILE as `raw`; it now stores
+    one chunk per hand. My mutation gate found that the first chunker dropped
+    the file's trailing newline, so a row written under the old regime could
+    never be cleared -- the summary would report a hand that imports fine,
+    forever. The hunter fixed it at the source in 7c5c276 by making the chunker
+    byte-faithful, which is a better remedy than the documented boundary we had
+    agreed to accept.
+
+    This pins it from the side that CARES: clearing is keyed on raw text, so a
+    lossy chunker silently breaks clearing and nothing else. If the chunker ever
+    stops being byte-faithful, this fails and names why.
+    """
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    whole = (FIXTURES / "ps_preflop_fold.txt").read_text()
+    chunk = split_pokerstars(whole)[0]
+    assert chunk == whole, "a single-hand file must chunk to itself, byte for byte"
+
+    conn = db.connect()
+    db.insert_failed_hand(conn, "PokerStars", whole, "legacy", AT)
+    assert db.clear_failed_hand(conn, "PokerStars", chunk) == 1
+    assert db.failed_hands(conn) == []
+
+
+def test_chunking_a_session_file_is_byte_faithful():
+    """Rejoining the chunks must reproduce the file exactly, for the same reason."""
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    for name in ("ps_session_multi.txt", "ps_session_mixed.txt"):
+        text = (FIXTURES / name).read_text()
+        assert "".join(split_pokerstars(text)) == text, name

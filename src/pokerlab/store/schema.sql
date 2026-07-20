@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS failed_hands(
   imported_at TEXT NOT NULL           -- groups one import batch
 );
 
+-- UNIQUE(site, raw) is enforced by `failed_hands_site_raw_uq`, created in
+-- db._ensure_current_schema rather than here. It cannot live in this file:
+-- this script runs FIRST on every connect, and on a database that already
+-- holds duplicate rows the index creation would raise before the collapse
+-- that makes it satisfiable ever runs. The constraint and the collapse have
+-- to be adjacent, so they live together there.
+
 CREATE TABLE IF NOT EXISTS gradings(
   id INTEGER PRIMARY KEY,
   hand_id INTEGER NOT NULL REFERENCES imported_hands(id),

@@ -100,6 +100,22 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
             "  GROUP BY hand_id, decision_idx HAVING c > 1;"
         ) from exc
 
+    # failed_hands: recording a failure is IDEMPOTENT per (site, raw).
+    #
+    # Deliberately COLLAPSED rather than refused, which is the opposite of the
+    # gradings case above, and the difference is what the duplicates mean.
+    # Duplicate gradings are distinct rows carrying distinct data that
+    # double-count into leak statistics — silently picking one would destroy
+    # information, so the only honest move is to stop and name it. Duplicate
+    # failure rows are the SAME hand recorded twice by two import runs; keeping
+    # the newest is exactly the semantics being adopted, so there is nothing to
+    # lose and nothing to ask the user about.
+    conn.execute(
+        "DELETE FROM failed_hands WHERE id NOT IN ("
+        "  SELECT MAX(id) FROM failed_hands GROUP BY site, raw)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS failed_hands_site_raw_uq"
+                 " ON failed_hands(site, raw)")
+
 
 # --------------------------------------------------------------------------- #
 # drill_attempts
@@ -212,10 +228,22 @@ def insert_failed_hand(conn: sqlite3.Connection, site: str, raw: str,
     Kept OUT of `imported_hands` on purpose: a failed hand must not claim its
     (site, hand_uid), or dedup would make the failure permanent and the hand
     could never be re-imported after a parser fix (wave-2 [E16]/[E17]).
+
+    IDEMPOTENT per (site, raw): re-recording a hand that is still broken
+    refreshes the existing row rather than adding one. The nightly cron
+    re-imports the same file every night, so stacking would have made one
+    unchanged broken hand read as a worsening problem in the report — a count
+    that grows without anything getting worse (round-4, found by the [R2']
+    mutation gate). The LATEST attempt wins on every field: the table answers
+    "what is broken now", so a reason that changes under a parser tweak should
+    refresh rather than leave the first-ever message frozen in place.
     """
     cur = conn.execute(
         "INSERT INTO failed_hands(site, hand_uid, raw, reason, imported_at)"
-        " VALUES (?, ?, ?, ?, ?)",
+        " VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(site, raw) DO UPDATE SET"
+        "   hand_uid=excluded.hand_uid, reason=excluded.reason,"
+        "   imported_at=excluded.imported_at",
         (site, hand_uid or None, raw, reason, imported_at),
     )
     if commit:
