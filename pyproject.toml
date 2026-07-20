@@ -23,6 +23,8 @@ dependencies = [
 
 [project.scripts]
 pokerlab-web = "pokerlab.web.app:main"
+pokerlab-import = "pokerlab.cli:main_import"
+pokerlab-batch = "pokerlab.cli:main_batch"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
