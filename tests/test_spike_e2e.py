@@ -22,7 +22,7 @@ from pokerlab.solver import subgame as sg
 from pokerlab.spike import tier2
 from pokerlab.store import db
 from pokerlab.store.views import hh_leak_report
-from pokerlab.drills.scheduler import schedule_attempt, select_next
+from pokerlab.drills.scheduler import select_next
 from pokerlab.web.app import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hh"
@@ -52,12 +52,16 @@ def test_full_loop_hh_to_web_drill(tmp_path):
     assert tiers == {1, 2, 3}                       # all three tiers really fired
     persist_session(conn, parsed, report, graded_at=AT, raw_texts=raws)
 
-    # 4. leak report -> top leak; register it with SM-2 (the "resurface" step).
+    # 4. leak report -> top leak, and SM-2 already knows about it. The import
+    #    itself is the "resurface" step: this test used to call
+    #    schedule_attempt() here, i.e. it wrote the sr_state row it then went on
+    #    to assert, which made the whole M4->M2 join a property of the test and
+    #    not of the product (round-3 finding [P1']). Nothing between persist and
+    #    the assertion may touch sr_state, or the join goes vacuous again.
     leaks = hh_leak_report(conn, limit=5)
     top = leaks[0]["leak_key"]
     assert top == "SBjam|preflop|jam|10"
     now = datetime.now(timezone.utc)
-    schedule_attempt(conn, top, correct=False, now=now)
     assert select_next(conn, now) == top
 
     # 5. the web API serves a drill for that category and scores an answer.

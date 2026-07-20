@@ -32,6 +32,10 @@ MIN_EASINESS = 1.3
 MAX_EASINESS = 3.0
 MAX_INTERVAL_DAYS = 365.0
 
+# A category no evidence has touched yet ranks as "nothing known", not as
+# "known to be fine" — both signals absent read 0 (see `select_next`).
+_NO_PRIORITY = {"error_rate": 0.0, "ev_loss_per_100": 0.0}
+
 
 @dataclass(frozen=True)
 class SRState:
@@ -164,8 +168,17 @@ def schedule_attempt(conn: sqlite3.Connection, leak_key: str, correct: bool,
 
 def select_next(conn: sqlite3.Connection, now: datetime,
                 categories: Iterable[str] | None = None) -> str | None:
-    """The leak_key to drill next: due first (worst error-rate wins), then any
-    never-drilled category, then the soonest-due one.
+    """The leak_key to drill next: due first (worst error-rate, then worst
+    HH EV-loss), then any never-drilled category, then the soonest-due one.
+
+    Ranking reads `views.category_priority`, which unions the two sources of
+    evidence about a category — drill error-rate AND the EV-loss the HH import
+    priced from real hands. Reading drill attempts alone made the M4->M2 join
+    vacuous: a leak the import had just detected had no drill history, so it
+    scored 0 and sat behind whatever the drill loop happened to know about
+    (round-3 finding [P1']). Error-rate stays primary — a category being
+    answered wrong right now outranks a historical EV price — and EV-loss
+    breaks the tie ahead of the due date.
 
     `categories` is the caller's full category vocabulary — normally every
     `leak_key` the drill generator can emit. Without it this can only ever
@@ -186,11 +199,15 @@ def select_next(conn: sqlite3.Connection, now: datetime,
     if not states and not known:
         return None
 
-    err = {r["leak_key"]: r["error_rate"]
-           for r in views.worst_leak_categories(conn, limit=10_000)}
+    prio = {r["leak_key"]: r for r in views.category_priority(conn)}
+
+    def rank(s: SRState) -> tuple[float, float, datetime]:
+        p = prio.get(s.leak_key, _NO_PRIORITY)
+        return (-p["error_rate"], -p["ev_loss_per_100"], _due_dt(s))
+
     due = [s for s in states if _is_due(s, now)]
     if due:
-        due.sort(key=lambda s: (-err.get(s.leak_key, 0.0), _due_dt(s)))
+        due.sort(key=rank)
         return due[0].leak_key
 
     if known is not None:                       # nothing due -> anything unseen

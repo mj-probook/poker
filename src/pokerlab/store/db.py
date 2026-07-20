@@ -79,6 +79,27 @@ def upsert_sr_state(conn: sqlite3.Connection, leak_key: str, easiness: float,
     conn.commit()
 
 
+def seed_sr_state(conn: sqlite3.Connection, leak_key: str, easiness: float,
+                  interval_days: float, reps: int, due: str, *,
+                  commit: bool = True) -> None:
+    """Make a category drillable at `due` WITHOUT resetting its SM-2 progress.
+
+    `upsert_sr_state` records a *review* and overwrites the whole row. This
+    writes the row only if the category is new, and otherwise touches the due
+    date alone: an HH import re-opens a leak for drilling, it must not un-learn
+    the easiness/interval the drill loop already earned for that category
+    (wave-3 [P1']).
+    """
+    conn.execute(
+        "INSERT INTO sr_state(leak_key, easiness, interval_days, reps, due)"
+        " VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(leak_key) DO UPDATE SET due=excluded.due",
+        (leak_key, float(easiness), float(interval_days), int(reps), due),
+    )
+    if commit:
+        conn.commit()
+
+
 def get_sr_state(conn: sqlite3.Connection, leak_key: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM sr_state WHERE leak_key=?", (leak_key,)).fetchone()

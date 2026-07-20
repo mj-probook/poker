@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
+from pokerlab.drills.scheduler import DEFAULT_EASINESS
 from pokerlab.hh import ggpoker, pokerstars
 from pokerlab.hh.decisions import Decision, extract_decisions
 from pokerlab.hh.grade import grade_tier2
@@ -96,7 +97,12 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
                     *, graded_at: str, raw_texts: list[str] | None = None) -> dict:
     """Persist a graded session atomically.
 
-    Counts {imported, graded, queued, skipped, failed}.
+    Counts {imported, graded, queued, skipped, failed, seeded}.
+
+    Importing is also what wires M4 to M2: every exact-tier (1/2) leak the
+    session produced is seeded into `sr_state` due immediately, so the drill
+    scheduler can serve it. That join used to live only in test code, which made
+    the whole "your hands pick your drills" promise vacuous (wave-3 [P1']).
 
     One transaction: either the whole session lands or none of it does, so a
     failure part-way through cannot leave a half-written session behind. Hands
@@ -113,6 +119,7 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
     can never be completed.
     """
     n_graded = n_queued = n_skipped = 0
+    seeded: set[str] = set()
     failed_idx = {fh.hand_index for fh in report.failed_hands}
     n_failed = len(failed_idx)
     try:
@@ -142,17 +149,36 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
                                   g.best or "", g.ev_loss, g.leak_key, graded_at,
                                   commit=False)
                 n_graded += 1
+                if g.ev_loss is not None:
+                    # THE LEAK->DRILL JOIN (wave-3 [P1']). An exact-tier
+                    # grading is evidence of a real, EV-priced leak, so the
+                    # import itself makes that category drillable — due at the
+                    # session's own timestamp, i.e. immediately. Tier 3 is
+                    # excluded on purpose: it has no ev_loss, so it can neither
+                    # be ranked against the exact tiers nor honestly claimed as
+                    # a leak (plan §5.3).
+                    seeded.add(g.leak_key)
             elif g.tier == TIER_SOLVER:
                 db.enqueue_batch(conn, spot_key(gd.decision), hid,
                                  g.decision_index, commit=False)
                 n_queued += 1
+
+        for leak_key in sorted(seeded):
+            # Due at `graded_at` — the session's own clock, so seeding is as
+            # deterministic as the rest of persist and the leak is drillable the
+            # moment the import finishes. A category already in `sr_state` keeps
+            # its learned easiness/interval and is only re-opened (see
+            # db.seed_sr_state); the ORDER the scheduler then serves these in is
+            # a query, not a stored rank (views.category_priority).
+            db.seed_sr_state(conn, leak_key, DEFAULT_EASINESS, 0.0, 0,
+                             graded_at, commit=False)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     return {"imported": sum(h is not None for h in hand_ids),
             "graded": n_graded, "queued": n_queued, "skipped": n_skipped,
-            "failed": n_failed}
+            "failed": n_failed, "seeded": len(seeded)}
 
 
 def drain_batch_queue(conn, solver: Solver, *, graded_at: str) -> dict:

@@ -81,6 +81,48 @@ def hh_leak_report(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def category_priority(conn: sqlite3.Connection) -> list[dict]:
+    """Every category either source knows about, with BOTH training signals.
+
+    The leak->drill join (wave-3 [P1']). The SM-2 scheduler used to rank what to
+    resurface by drill error-rate alone, which meant a leak the HH import had
+    just priced in EV was invisible to it until the drill loop independently
+    stumbled on that category — so "my hands pick my drills" (plan §5.3) never
+    actually held. This is the union of both vocabularies:
+
+      * `ev_loss_per_100` — bb/100 conceded in real hands, tiers 1-2 ONLY. Tier
+        3 carries no ev_loss (honesty rule), so it is excluded rather than
+        counted as 0 and ranked against tiers that have a trustworthy oracle.
+      * `error_rate` — fraction of drill attempts answered wrong.
+
+    A category missing from one source scores 0 there, never NULL, so callers
+    can sort on either field without special-casing. Derived, so it is a query
+    and never a table (plan §3).
+    """
+    rows = conn.execute(
+        "WITH hh AS ("
+        "  SELECT leak_key, COUNT(*) AS decisions,"
+        "         100.0 * AVG(ev_loss) AS ev_loss_per_100"
+        "    FROM gradings WHERE tier IN (1, 2) AND ev_loss IS NOT NULL"
+        "   GROUP BY leak_key),"
+        " dr AS ("
+        "  SELECT leak_key, COUNT(*) AS attempts,"
+        "         1.0 - AVG(correct) AS error_rate"
+        "    FROM drill_attempts GROUP BY leak_key),"
+        " keys AS (SELECT leak_key FROM hh UNION SELECT leak_key FROM dr)"
+        "SELECT k.leak_key,"
+        "       COALESCE(hh.decisions, 0)          AS decisions,"
+        "       COALESCE(hh.ev_loss_per_100, 0.0)  AS ev_loss_per_100,"
+        "       COALESCE(dr.attempts, 0)           AS attempts,"
+        "       COALESCE(dr.error_rate, 0.0)       AS error_rate"
+        "  FROM keys k"
+        "  LEFT JOIN hh ON hh.leak_key = k.leak_key"
+        "  LEFT JOIN dr ON dr.leak_key = k.leak_key"
+        " ORDER BY error_rate DESC, ev_loss_per_100 DESC, k.leak_key"
+    )
+    return [dict(r) for r in rows]
+
+
 def tier3_frequency_report(conn: sqlite3.Connection) -> list[dict]:
     """Tier-3 (multiway) decisions grouped by leak_key with counts — the
     frequency signal, listed separately from the EV-loss ranking. No ev_loss

@@ -6,10 +6,12 @@ the (not-yet-landed) real solver behind the injected `Solver` seam.
 """
 
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from pokerlab.drills.scheduler import select_next
 from pokerlab.hh.persist import drain_batch_queue, persist_session
 from pokerlab.hh.ggpoker import parse_ggpoker
 from pokerlab.hh.pokerstars import parse_pokerstars
@@ -493,3 +495,47 @@ def test_drain_refuses_a_decision_that_is_not_the_one_queued() -> None:
     assert not [g for g in db.gradings(conn)
                 if g["hand_id"] == row["hand_id"]
                 and g["decision_idx"] == row["decision_idx"]]
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 finding [P1'] (P0): the M4->M2 leak->drill join existed only in test
+# code — `persist_session` wrote no `sr_state`, so the scheduler could never
+# learn about a leak the HH import had just detected. The join has to happen in
+# PRODUCTION code: importing a session is what makes its leaks drillable.
+# --------------------------------------------------------------------------- #
+def test_persist_seeds_sr_state_from_the_sessions_exact_tier_leaks() -> None:
+    conn, report, _counts = _persisted_session()
+
+    seeded = {r["leak_key"] for r in db.all_sr_state(conn)}
+    exact = {gd.grading.leak_key for gd in report.exact}
+    assert exact, "fixture session must contain exact-tier gradings"
+    assert seeded == exact, "every exact-tier leak becomes a drillable category"
+
+
+def test_importing_a_session_makes_its_worst_leak_the_next_drill() -> None:
+    """The P1' invariant: the served category IS the top exact-tier leak.
+
+    Asserted as an invariant over whatever the fixtures grade to, never as the
+    pre-fix symptom (a hard-coded winning key) — /tmp/pl README's warning that a
+    check encoding the old world becomes a regression detector for the fix.
+    """
+    conn, _report, counts = _persisted_session()
+    assert counts["seeded"] > 0
+
+    # A DECOY that makes this test able to fail. The seeded categories are all
+    # due at the same instant with zero drill attempts, so error-rate and
+    # due-date — the only keys the pre-fix scheduler had — cannot separate them,
+    # and the right answer would win by alphabetical/insertion accident. This
+    # category is trivial in EV but BOTH sorts first and has been due longest, so
+    # every pre-fix tiebreaker points at it: only a ranking that actually reads
+    # HH EV-loss picks the real leak.
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}", AT, "decoy")
+    db.insert_grading(conn, hid, 0, 1, "jam", "jam", 0.01,
+                      "AAdecoy|preflop|jam|10", AT)
+    db.seed_sr_state(conn, "AAdecoy|preflop|jam|10", 2.5, 0.0, 0,
+                     "2026-07-18T00:00:00")
+
+    leaks = hh_leak_report(conn, limit=5)
+    now = datetime.fromisoformat(AT) + timedelta(minutes=1)
+    served = select_next(conn, now, categories=[r["leak_key"] for r in leaks])
+    assert served == leaks[0]["leak_key"] != "AAdecoy|preflop|jam|10"

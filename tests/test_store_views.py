@@ -63,3 +63,43 @@ def test_overall_accuracy():
 def test_overall_accuracy_empty_is_zero():
     conn = db.connect(":memory:")
     assert views.overall_accuracy(conn) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 finding [P1'] (P0): the scheduler ranked categories by drill
+# error-rate ALONE, so a leak the HH import had just priced in EV could never
+# outrank a category the drill loop happened to know about. `category_priority`
+# is the join — derived, so it is a QUERY, never a column (plan §3).
+# --------------------------------------------------------------------------- #
+def _grade(conn, leak_key, ev_loss, tier=1, idx=0):
+    hid = db.insert_imported_hand(conn, "PokerStars", "raw", "{}",
+                                  "2026-07-19T00:00:00", f"h{leak_key}{idx}")
+    db.insert_grading(conn, hid, idx, tier, "jam", "fold", ev_loss, leak_key,
+                      "2026-07-19T00:00:00")
+
+
+def test_category_priority_joins_hh_ev_loss_with_drill_error_rate():
+    conn = db.connect(":memory:")
+    _seed(conn)                                  # drill attempts only
+    _grade(conn, "SBjam|preflop|jam|10", 1.14)   # HH leak, never drilled
+    _grade(conn, "BBcall:10bb", 0.02, idx=1)     # drilled AND HH-graded
+
+    rows = {r["leak_key"]: r for r in views.category_priority(conn)}
+
+    # a category known only to the HH import is present, with a real EV price
+    assert rows["SBjam|preflop|jam|10"]["ev_loss_per_100"] == pytest.approx(114.0)
+    assert rows["SBjam|preflop|jam|10"]["attempts"] == 0
+    # a category known only to the drill loop is present, with no EV price
+    assert rows["SBjam:10bb"]["error_rate"] == pytest.approx(0.75)
+    assert rows["SBjam:10bb"]["ev_loss_per_100"] == 0.0
+    # and one the two sources share carries both signals
+    both = rows["BBcall:10bb"]
+    assert both["error_rate"] == pytest.approx(0.25)
+    assert both["ev_loss_per_100"] == pytest.approx(2.0)
+
+
+def test_category_priority_excludes_tier_3():
+    """Tier 3 has no ev_loss, so it can never be ranked here (plan §5.3)."""
+    conn = db.connect(":memory:")
+    _grade(conn, "6max:LJ|flop|bet|-", None, tier=3)
+    assert views.category_priority(conn) == []
