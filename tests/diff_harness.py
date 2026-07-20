@@ -406,7 +406,15 @@ def run_differential(
 
     ``action_fn`` (a module-level, picklable policy) lets callers drive the same
     oracle through a different code path — Slice H reuses this with a discrete
-    env-encoding policy for the SingleEnvAdapter exit."""
+    env-encoding policy for the SingleEnvAdapter exit.
+
+    An explicit ``workers=`` BYPASSES the xdist division below — it is obeyed,
+    not scaled, so a caller passing ``workers=8`` under ``pytest -n 4`` restores
+    the oversubscription ``_default_workers`` exists to prevent. No caller does
+    this today (all 8 call sites omit it), and that is a checked fact, not an
+    accident: if you add one under xdist, either pass a per-box value divided
+    yourself or move the division to this boundary so explicit values scale too
+    (recorded closure option; not built while it has no caller)."""
     import concurrent.futures as cf
     import functools
 
