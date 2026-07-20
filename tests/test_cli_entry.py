@@ -165,3 +165,45 @@ def test_batch_rejects_a_non_terminal_retry_status(tmp_path, capsys) -> None:
         main_batch(["--db", dbp, "--retry", "done"])
     assert exc.value.code == 2
     assert "terminal" in capsys.readouterr().err.lower()
+
+
+# --------------------------------------------------------------------------- #
+# Sweep [R1], one layer up: `persist_session` makes a failure durable only if
+# the hand reaches GRADING. `_read_hands` catches parse errors before that and
+# used to only print them — so on the nightly-cron path, where nobody reads
+# stdout, a hand that failed to parse left no trace at all. That is the exact
+# gap R1 exists to close (r1-fixer's rationale), reappearing in the entry point.
+# --------------------------------------------------------------------------- #
+def test_a_hand_that_fails_to_parse_is_recorded_not_just_printed(tmp_path, capsys):
+    broken = tmp_path / "broken.txt"
+    broken.write_text("PokerStars Hand #999999: Tournament #1, $1+$0 USD "
+                      "Hold'em No Limit - Level I (10/20) - 2024/01/01 00:00:00 ET\n"
+                      "this body is not parseable\n")
+    dbp = str(tmp_path / "cli.db")
+
+    assert main_import([*_FILES, str(broken), "--db", dbp]) == 0
+
+    assert "broken.txt" in capsys.readouterr().out       # still printed...
+    rows = db.failed_hands(db.connect(dbp))              # ...AND durable
+    assert len(rows) == 1
+    assert rows[0]["site"] == "PokerStars"
+    assert "raw" and rows[0]["raw"].startswith("PokerStars Hand #999999")
+    assert rows[0]["reason"]
+
+
+def test_a_file_that_is_not_a_hand_history_is_not_recorded_as_a_lost_hand(
+        tmp_path, capsys):
+    """Unrecognized input is a different event from a hand we failed to parse.
+
+    We cannot name a site for it, and nothing was lost — the remedy is "check
+    what you passed", not "fix the parser". Recording it as a failed hand would
+    collapse two remedies into one, the defect caught in retry_failed_batch.
+    """
+    junk = tmp_path / "junk.txt"
+    junk.write_text("not a hand history at all\n")
+    dbp = str(tmp_path / "cli.db")
+
+    assert main_import([*_FILES, str(junk), "--db", dbp]) == 0
+
+    assert "junk.txt" in capsys.readouterr().out         # reported to the user
+    assert db.failed_hands(db.connect(dbp)) == []        # but not a lost hand

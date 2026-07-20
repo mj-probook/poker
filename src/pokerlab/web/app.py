@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from pokerlab.drills import generator as gen
 from pokerlab.drills import scheduler as sch
 from pokerlab.drills.scoring import score
+from pokerlab.hh import persist
 from pokerlab.hh.tiers import TIER_LABELS
 from pokerlab.store import db, views
 from pokerlab.types import TIER_BEST_AVAILABLE, TIER_CHART
@@ -53,6 +54,16 @@ TERMINAL_ACTIONS: dict[str, str] = {
 # "everything that is not terminal or done": a future in-flight status must
 # count as backlog here, and subtraction would silently file it as terminal.
 _IN_FLIGHT = ("pending", "running")
+
+# The remedy for a hand the grader could not process. Its own action, because
+# it is its own remedy: draining cannot help and a retry cannot help — the
+# parser has to change first. Lives here for the same reason TERMINAL_ACTIONS
+# does: one server-side home, carried in the payload, rendered by a page that
+# never authors it.
+FAILED_HANDS_ACTION = ("fix the parser, then re-import — these hands are "
+                       "re-importable and clear themselves on success")
+# Shown when a parse died before reaching the site's hand number.
+UNIDENTIFIED_HAND = "unidentified"
 
 # What a drill kind's ev_loss is DENOMINATED in (round-3 finding [P7']).
 #
@@ -222,6 +233,32 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             session["blocked"] = [
                 dict(r) | {"action": TERMINAL_ACTIONS[r["status"]]}
                 for r in blocked
+            ]
+            # PLAN §8 M4 exit: failed hands are "isolated and surfaced in the
+            # session summary — never silently dropped". A count alone would
+            # recreate the not-actionable defect the terminal-cause split just
+            # fixed ("3 failed" without WHICH), so every failure carries its
+            # identity and its reason, and the section carries its remedy.
+            #
+            # Deliberately NOT folded into `partial`: draining will never change
+            # a failed hand, so `partial` would go back to being permanently
+            # true under a banner promising numbers that cannot move. Also kept
+            # apart from `skipped` — "already imported, nothing to do" and "you
+            # lost a hand" are different events, and collapsing remedies is the
+            # defect caught in retry_failed_batch.
+            failures = persist.failed_hand_report(conn)
+            session["failed"] = len(failures)
+            session["failed_action"] = FAILED_HANDS_ACTION
+            session["failed_hands"] = [
+                {"site": f["site"], "hand_uid": f["hand_uid"],
+                 "reason": f["reason"], "imported_at": f["imported_at"],
+                 # A parse can die before it reaches the hand number, so the uid
+                 # is nullable. Unknown is not absent: it renders as a stated
+                 # "unidentified", never a blank and never a fabricated id —
+                 # the same rule as a NULL population_frequency showing "no
+                 # baseline" rather than 0%.
+                 "label": f["hand_uid"] or UNIDENTIFIED_HAND}
+                for f in failures
             ]
             return {
                 "session": session,

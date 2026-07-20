@@ -73,6 +73,24 @@ function renderSummary(s) {
     line.appendChild(el("span", ` — ${b.action}`));
     box.appendChild(line);
   });
+
+  // Failed hands: PLAN §8's M4 exit promises these are never silently dropped.
+  // They are NOT part of the partial banner — draining cannot change them — so
+  // they get their own block, and it has to be unmissable, because `partial`
+  // reading false while hands went ungraded is only honest if this is visible.
+  if (s.failed) {
+    const box2 = el("div", "", "banner failed");
+    box2.appendChild(el("strong", `${s.failed} hands could not be graded`));
+    box2.appendChild(el("span", ` — ${s.failed_action}`));
+    const list = el("ul");
+    (s.failed_hands || []).forEach((f) => {
+      // `label` is the server's rendering of a possibly-absent hand number:
+      // an unknown id is stated, never blanked and never invented.
+      list.appendChild(el("li", `${f.site} ${f.label} — ${f.reason}`));
+    });
+    box2.appendChild(list);
+    box.appendChild(box2);
+  }
 }
 
 function renderLeaks(leaks) {

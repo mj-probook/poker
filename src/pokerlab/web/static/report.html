@@ -17,6 +17,12 @@
     /* Terminal causes read as standing facts, not as in-flight work — the
        distinction the operator has to act on differently. */
     .blocked { background: #f4f4f6; border: 1px solid #ccc; margin: 0.4rem 0; }
+    /* Ungraded hands are a data-loss claim, not a status line — styled to be
+       the thing you cannot miss, since `partial` may legitimately read false
+       while these exist. */
+    .failed { background: #fdeceb; border: 1px solid #d08b86; margin: 0.6rem 0; }
+    .failed ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    .failed li { font-size: 0.92rem; color: #6a2b27; }
     /* Tier labels are load-bearing UI (plan §9), so the approximate section is
        styled as a distinct claim rather than as more rows of the same table. */
     .tier-label { font-weight: 600; color: #7a4d00; }

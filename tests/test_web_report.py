@@ -247,3 +247,136 @@ def test_report_js_renders_each_terminal_cause_with_its_served_action():
     # is against the actual copy: no TERMINAL_ACTIONS string may appear here.
     for action in TERMINAL_ACTIONS.values():
         assert action not in js, f"copy must come from the payload: {action!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Sweep finding [R1] (P2): PLAN §8 M4 exit promises failed hands are "isolated
+# and surfaced in the session summary — never silently dropped". r1's d2704b3
+# made the failure durable; this is the surface. A count alone would recreate
+# the not-actionable defect the terminal-cause split just fixed, so each failure
+# carries its identity and its reason, and the section carries its remedy.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def one_good_one_broken(tmp_path):
+    """r3-product's acceptance fixture, built to actually discriminate.
+
+    The GOOD hand is `ps_multiway_flop.txt` (5 gradings), never
+    `ps_preflop_fold.txt` — that one parses fine but grades nothing, so "the
+    good hand still landed" would assert nothing at all (r1's fixture note).
+    """
+    dbp = str(tmp_path / "mixed.db")
+    good = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    broken = "PokerStars Hand #999: this header parses, the body does not\n"
+    parsed = [parse_pokerstars(good)]
+    conn = db.connect(dbp)
+    report = grade_session(parsed, population=load_population())
+    persist_session(conn, parsed, report, graded_at=AT, raw_texts=[good])
+    # the broken hand's failure is what r1's table records
+    db.insert_failed_hand(conn, "PokerStars", broken,
+                          "ValueError: unparseable body", AT, hand_uid="999")
+    # ...and one whose parse died before it reached a hand number
+    db.insert_failed_hand(conn, "GGPoker", "garbage", "ValueError: no header",
+                          AT, hand_uid=None)
+    conn.close()
+    return dbp
+
+
+def test_failed_hands_are_surfaced_never_silently_dropped(one_good_one_broken):
+    s = _report(one_good_one_broken)["session"]
+
+    assert s["failed"] == 2
+    # a count alone is not actionable: each failure names itself and its cause
+    reasons = {f["reason"] for f in s["failed_hands"]}
+    assert "ValueError: unparseable body" in reasons
+    assert all("site" in f and "reason" in f for f in s["failed_hands"])
+    # and the section states the remedy, like the terminal batch causes
+    assert "failed_action" in s and "import" in s["failed_action"].lower()
+
+
+def test_a_failure_with_no_hand_number_renders_unidentified(one_good_one_broken):
+    """`hand_uid` is nullable — the parse can die before reaching it.
+
+    A missing identifier is UNKNOWN, not absent: same honesty rule as a NULL
+    population_frequency rendering "no baseline" rather than 0%. Never a blank,
+    never a fabricated id.
+    """
+    by_site = {f["site"]: f for f in
+               _report(one_good_one_broken)["session"]["failed_hands"]}
+
+    assert by_site["PokerStars"]["hand_uid"] == "999"
+    assert by_site["GGPoker"]["hand_uid"] is None      # served as null...
+    assert by_site["GGPoker"]["label"] == "unidentified"   # ...rendered as this
+    assert by_site["PokerStars"]["label"] == "999"
+
+
+def test_the_good_hand_still_landed_alongside_the_failures(one_good_one_broken):
+    """One broken hand must never cost the hands that did import (finding [8])."""
+    body = _report(one_good_one_broken)
+    assert body["session"]["hands"] == 1
+    assert body["session"]["graded"] > 0
+    assert body["leaks"] or body["tier3"]["rows"], "the good hand produced output"
+
+
+def test_partial_means_batch_pending_only_not_failure(one_good_one_broken):
+    """THE DELIBERATE PIN (sweep ruling). `partial` answers exactly one
+    question: "will draining change these numbers?"
+
+    A failed hand's numbers will NOT change from draining — its remedy is a
+    parser fix and a re-import, a different action entirely. Widening `partial`
+    to mean "incomplete in any sense" would restore the defect fixed in
+    79f0ff5, where it was permanently true under a banner promising a drain
+    would move numbers it could never move.
+
+    The cost is real and is why the two assertions live in ONE test: a session
+    can read `partial: false` while carrying ungraded hands. That is only
+    honest because the failure surface is unmissable, so the `false` and the
+    visible failures are pinned TOGETHER — neither may be changed alone.
+    """
+    # Resolve the good hand's tier-2 backlog first — that is the ONLY thing
+    # `partial` is allowed to track, so it has to be empty for this test to be
+    # about failures at all. (Terminal, as a real drain leaves gate-refused
+    # spots; the point is that nothing is pending.)
+    conn = db.connect(one_good_one_broken)
+    for row in db.pending_batch(conn):
+        db.set_batch_status(conn, row["id"], "unsolvable")
+    conn.close()
+
+    s = _report(one_good_one_broken)["session"]
+
+    assert s["queued"] == 0
+    assert s["partial"] is False          # nothing to drain -> not partial...
+    assert s["failed"] == 2               # ...and the failures are RIGHT THERE
+    assert len(s["failed_hands"]) == 2
+
+
+def test_skipped_and_failed_are_never_collapsed(tmp_path):
+    """Dedup-skipped and failed are different events with different meanings.
+
+    "Already imported, nothing to do" versus "you lost a hand". Collapsing
+    remedies at the action layer is the defect caught in retry_failed_batch
+    (r1's note), and it would be the same defect here.
+    """
+    dbp = str(tmp_path / "dup.db")
+    raw = (FIXTURES / "ps_multiway_flop.txt").read_text()
+    parsed = [parse_pokerstars(raw)]
+    conn = db.connect(dbp)
+    rep = grade_session(parsed, population=load_population())
+    persist_session(conn, parsed, rep, graded_at=AT, raw_texts=[raw])
+    second = persist_session(conn, parsed, rep, graded_at=AT, raw_texts=[raw])
+    conn.close()
+
+    assert second["skipped"] == 1 and second["failed"] == 0
+    s = _report(dbp)["session"]
+    assert s["failed"] == 0, "a dedup skip is not a failure"
+
+
+def test_report_js_renders_failed_hands_with_the_served_action_and_label():
+    """Same rule as every other claim on this page: rendered, never authored."""
+    from pokerlab.web.app import FAILED_HANDS_ACTION, UNIDENTIFIED_HAND
+
+    js = (STATIC / "report.js").read_text()
+    assert "s.failed_hands" in js and "s.failed_action" in js
+    assert "f.reason" in js and "f.label" in js
+    # the remedy copy and the unknown-id wording both live server-side
+    assert FAILED_HANDS_ACTION not in js
+    assert UNIDENTIFIED_HAND not in js, "the page must not author the id fallback"

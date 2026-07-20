@@ -47,11 +47,29 @@ def detect_site(raw: str) -> str | None:
 _PARSERS = {"PokerStars": parse_pokerstars, "GGPoker": parse_ggpoker}
 
 
-def _read_hands(paths: list[str]) -> tuple[list[ParsedHand], list[str], list[str]]:
-    """(parsed, raws, problems) — an unreadable file never costs the others."""
+def _read_hands(paths: list[str]
+                ) -> tuple[list[ParsedHand], list[str], list[str],
+                           list[tuple[str, str, str]]]:
+    """(parsed, raws, problems, lost) — an unreadable file never costs the others.
+
+    `lost` is the subset of problems that are LOST HANDS: a real hand history,
+    from a site we recognize, that our parser could not read. Those are the M4
+    promise's subject (plan §8: "never silently dropped") and the caller records
+    them durably — printing alone left no trace by morning on a cron run, which
+    is the very gap `failed_hands` exists to close, reappearing one layer up in
+    the entry point.
+
+    The other two problems are deliberately NOT lost hands, because their
+    remedies differ and collapsing remedies is its own defect:
+      * unreadable file — there is no text to store and nothing to re-import;
+        the remedy is fixing permissions or the path, not the parser.
+      * unrecognized format — we cannot even name a site for it, and nothing
+        was lost; the remedy is "check what you passed".
+    """
     parsed: list[ParsedHand] = []
     raws: list[str] = []
     problems: list[str] = []
+    lost: list[tuple[str, str, str]] = []      # (site, raw, reason)
     for p in paths:
         name = Path(p).name
         try:
@@ -67,8 +85,10 @@ def _read_hands(paths: list[str]) -> tuple[list[ParsedHand], list[str], list[str
             parsed.append(_PARSERS[site](raw))
             raws.append(raw)
         except Exception as exc:  # noqa: BLE001 - per-file isolation boundary
-            problems.append(f"{name}: {type(exc).__name__}: {exc}")
-    return parsed, raws, problems
+            reason = f"{type(exc).__name__}: {exc}"
+            problems.append(f"{name}: {reason}")
+            lost.append((site, raw, reason))
+    return parsed, raws, problems, lost
 
 
 def main_import(argv: list[str] | None = None) -> int:
@@ -79,18 +99,26 @@ def main_import(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default=DEFAULT_DB, help="SQLite path")
     args = ap.parse_args(argv)
 
-    parsed, raws, problems = _read_hands(args.files)
+    parsed, raws, problems, lost = _read_hands(args.files)
     for p in problems:
         print(f"  SKIPPED {p}")
-    if not parsed:
-        print("no hands to import")
-        return 0
 
     conn = db.connect(args.db)
+    at = datetime.now(timezone.utc).isoformat()
+
+    # Record lost hands BEFORE the empty-session exit. A cron run whose files
+    # are all broken is exactly the case where the failure must survive, and
+    # returning early here would have left the worst run with no trace at all.
+    for site, raw, reason in lost:
+        db.insert_failed_hand(conn, site, raw, reason, at)
+
+    if not parsed:
+        print(f"no hands to import ({len(lost)} recorded as failed)")
+        return 0
+
     report = grade_session(parsed, population=load_population())
     counts = persist_session(
-        conn, parsed, report, raw_texts=raws,
-        graded_at=datetime.now(timezone.utc).isoformat())
+        conn, parsed, report, raw_texts=raws, graded_at=at)
 
     print(f"\n=== session: {len(parsed)} hands from {len(args.files)} files ===")
     print(f"imported   : {counts['imported']} ({counts['skipped']} already known)")
@@ -99,7 +127,15 @@ def main_import(argv: list[str] | None = None) -> int:
     # backlog, so printing them as one number would hide exactly that gap.
     print(f"routed     : {report.total} decisions  {report.routed} by tier")
     print(f"graded     : {counts['graded']} with a reference")
-    print(f"failed     : {report.failed_hand_count} hands could not be graded")
+    # Two distinct failure stages, both durable, both counted here: a hand can
+    # die at PARSE (never becomes a ParsedHand) or later at GRADING (replay or
+    # reconcile rejects it). Reporting only the second was the entry point's
+    # share of the M4 gap.
+    print(f"failed     : {report.failed_hand_count + len(lost)} hands could "
+          f"not be graded ({len(lost)} at parse, "
+          f"{report.failed_hand_count} at grading)")
+    for site, _raw, reason in lost:
+        print(f"   - {site} (parse): {reason}")
     for fh in report.failed_hands:
         print(f"   - hand #{fh.hand_index} ({fh.hand_id}): {fh.reason}")
     # A pending count is not a footnote: plan §5.3 marks a session PARTIAL until
