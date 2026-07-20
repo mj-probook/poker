@@ -55,6 +55,12 @@ TERMINAL_ACTIONS: dict[str, str] = {
 # count as backlog here, and subtraction would silently file it as terminal.
 _IN_FLIGHT = ("pending", "running")
 
+# Names the DB-wide backlog's scope in the SERVER's words, next to the number
+# it describes. Deliberately says nothing about "this session": the round-4 [9]
+# defect was one word ("partial") answering for two different scopes, and a
+# label the page could author itself would let that drift straight back in.
+IN_FLIGHT_LABEL = "queued across all imports — not only this session"
+
 # The remedy for a hand the grader could not process. Its own action, because
 # it is its own remedy: draining cannot help and a retry cannot help — the
 # parser has to change first. Lives here for the same reason TERMINAL_ACTIONS
@@ -211,16 +217,36 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             counts = conn.execute(
                 "SELECT (SELECT COUNT(*) FROM imported_hands)            AS hands,"
                 "       (SELECT COUNT(*) FROM gradings)                  AS graded,"
+                # THIS session's in-flight rows: batch rows belonging to hands
+                # imported in the most recent batch. `imported_at` is written
+                # once per import run (hh/persist takes the caller's stamp), so
+                # it is the session boundary the CLI already reports against.
+                "       (SELECT COUNT(*) FROM batch_queue q"
+                "          JOIN imported_hands h ON h.id = q.hand_id"
+                "         WHERE q.status IN (?, ?)"
+                "           AND h.imported_at ="
+                "               (SELECT MAX(imported_at) FROM imported_hands)"
+                "       )                                                AS queued,"
                 "       (SELECT COUNT(*) FROM batch_queue"
-                "         WHERE status IN (?, ?))                        AS queued",
-                _IN_FLIGHT,
+                "         WHERE status IN (?, ?))                        AS in_flight_total",
+                _IN_FLIGHT * 2,
             ).fetchone()
             session = dict(counts)
-            # PARTIAL means "work is still coming" — and now it can mean it.
-            # `queued` counts only in-flight rows, so a terminal row no longer
-            # pins the session partial forever while the banner promises numbers
-            # that will never move (wave-3 [P5'] follow-on).
+            # PARTIAL is scoped to THIS SESSION'S batch (PLAN §5.3: "until its
+            # batch is solved"), which is what the CLI banner has always meant.
+            # Computing it from the DB-wide count made every session inherit
+            # every earlier session's backlog: a session that queued nothing
+            # read as partial, and the banner told the operator to run a drain
+            # that could not change one number in the report below it
+            # (round-4 finding [9]).
+            #
+            # `in_flight_total` keeps the DB-wide view, because "is the solver
+            # behind on anything at all?" is a real question and deleting the
+            # count would trade a wrong answer for a missing one. It carries its
+            # own scope in its own label: the defect was one WORD serving two
+            # scopes, so the fix has to be two names, not a better comment.
             session["partial"] = session["queued"] > 0
+            session["in_flight_label"] = IN_FLIGHT_LABEL
             # Terminal rows are not backlog, but they are not nothing either:
             # each is reported with the action that actually clears it.
             marks = ",".join("?" * len(db.TERMINAL_STATUSES))

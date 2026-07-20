@@ -59,10 +59,21 @@ function renderSummary(s) {
   if (s.partial) {
     box.appendChild(el(
       "div",
-      `⚠️ PARTIAL — ${s.queued} decisions are still queued for solving. ` +
-      `Run pokerlab-batch; the leak numbers below will change.`,
+      `⚠️ PARTIAL — ${s.queued} of this session's decisions are still queued ` +
+      `for solving. Run pokerlab-batch; the leak numbers below will change.`,
       "banner partial"
     ));
+  }
+  // The DB-wide backlog, shown only when it exceeds this session's own share —
+  // otherwise it is the same number twice and reads as a second problem. Its
+  // scope is the server's sentence, never restated here: this page cannot know
+  // which imports those rows came from, so it must not describe them
+  // (round-4 [9]).
+  if (s.in_flight_total > s.queued) {
+    const line = el("div", "", "banner blocked");
+    line.appendChild(el("strong", `${s.in_flight_total} queued in total`));
+    line.appendChild(el("span", ` — ${s.in_flight_label}`));
+    box.appendChild(line);
   }
   // Each terminal cause carries the action that actually clears IT. Rendering
   // them as one number told the user to retry rows a retry cannot fix — and for
