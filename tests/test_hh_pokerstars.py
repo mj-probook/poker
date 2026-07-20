@@ -8,7 +8,10 @@ stacks and contested pot match the results *stated in the hand history text*.
 
 from pathlib import Path
 
+import pytest
+
 from pokerlab.engine.state import Hand
+from pokerlab.hh.decisions import reconcile
 from pokerlab.hh.pokerstars import parse_pokerstars
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hh"
@@ -161,3 +164,103 @@ def test_multiway_big_blind_ante_fixture_is_unchanged() -> None:
     parsed = parse_pokerstars((FIXTURES / "ps_bb_ante.txt").read_text())
     assert parsed.setup.bb_ante == 600 and parsed.setup.ante == 0
     _assert_replay_matches(parsed)
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 findings [H1][H5]: the ante amount and the ante STRUCTURE are two
+# separate readings, and both were fragile. H1: the amount came from the first
+# ante line, which is the *shortfall* when a short stack posts partially and
+# sits in an earlier seat. H5: the structure is textually ambiguous when the
+# file does not name the big blind as the poster, so the stated result arbitrates.
+# --------------------------------------------------------------------------- #
+def test_partial_ante_from_a_short_stack_does_not_set_the_table_ante() -> None:
+    """[H1] a player too short to pay posts a partial ante and is all-in.
+
+    The ante is what everyone OWES, so it is the maximum posted, not the first
+    line. The engine already clamps each seat to its stack, so passing the full
+    ante is also what makes the short stack come out right.
+    """
+    text = (
+        "PokerStars Hand #240000000032: Tournament #3900000032, $10+$1 USD "
+        "Hold'em No Limit - Level X (100/200) - 2024/03/01 20:15:00 ET\n"
+        "Table '3900000032 7' 9-max Seat #1 is the button\n"
+        "Seat 1: Villain1 (25 in chips)\n"
+        "Seat 2: Villain2 (5000 in chips)\n"
+        "Seat 3: Hero (5000 in chips)\n"
+        "Villain1: posts the ante 25 and is all-in\n"   # the SHORTFALL, listed first
+        "Villain2: posts the ante 50\n"
+        "Hero: posts the ante 50\n"
+        "Villain2: posts small blind 100\n"
+        "Hero: posts big blind 200\n"
+        "*** HOLE CARDS ***\n"
+        "Dealt to Hero [Ah Kd]\n"
+        "Villain2: folds\n"
+        "Uncalled bet (100) returned to Hero\n"
+        "Hero collected 325 from pot\n"
+        "*** SUMMARY ***\n"
+        "Total pot 325 | Rake 0\n"
+    )
+    assert parse_pokerstars(text).setup.ante == 50      # was 25 -> undercharged
+
+
+@pytest.mark.parametrize("fixture,correct", [("ps_bb_ante.txt", "bb_ante"),
+                                             ("ps_ante_hu.txt", "ante")])
+def test_stated_result_arbitrates_an_ambiguous_ante_reading(fixture, correct) -> None:
+    """[H5] feed the arbitration the WRONG structure; it must recover it.
+
+    Tested at the mechanism rather than through a contrived fixture: the
+    identity rule already reads every checked-in hand correctly, so a fixture
+    that exercised the fallback would have to be one we do not believe in.
+    Both directions are covered, and a correct reading must never be moved.
+    """
+    import dataclasses
+
+    from pokerlab.hh._common import _arbitrate_ante
+
+    parsed = parse_pokerstars((FIXTURES / fixture).read_text())
+    amount = parsed.setup.ante or parsed.setup.bb_ante
+    kwargs = dict(actions=parsed.actions, stated_pot=parsed.total_pot,
+                  uncalled=parsed.uncalled,
+                  stated_final=parsed.stated_final_stacks())
+
+    wrong = dataclasses.replace(
+        parsed.setup,
+        ante=0 if parsed.setup.ante else amount,
+        bb_ante=amount if parsed.setup.ante else 0)
+    recovered = _arbitrate_ante(wrong, **kwargs)
+    assert ("bb_ante" if recovered.bb_ante else "ante") == correct
+
+    # ...and an already-correct reading is left exactly alone
+    assert _arbitrate_ante(parsed.setup, **kwargs) == parsed.setup
+
+
+def test_arbitration_keeps_the_original_when_neither_reading_reconciles() -> None:
+    """A hand we cannot model must be DROPPED loudly, not silently reshaped.
+
+    One non-blind seat posting a lone ante is neither a per-player ante (the
+    others did not post) nor a BB ante (the poster is not the BB), so both
+    readings fail and reconciliation is the correct place for it to die.
+    """
+    text = (
+        "PokerStars Hand #240000000031: Tournament #3900000031, $10+$1 USD "
+        "Hold'em No Limit - Level X (100/200) - 2024/03/01 20:15:00 ET\n"
+        "Table '3900000031 7' 9-max Seat #1 is the button\n"
+        "Seat 1: Villain1 (5000 in chips)\n"
+        "Seat 2: Villain2 (5000 in chips)\n"
+        "Seat 3: Hero (5000 in chips)\n"
+        "Villain1: posts the ante 25\n"
+        "Villain2: posts small blind 100\n"
+        "Hero: posts big blind 200\n"
+        "*** HOLE CARDS ***\n"
+        "Dealt to Hero [Ah Kd]\n"
+        "Villain1: folds\n"
+        "Villain2: folds\n"
+        "Uncalled bet (100) returned to Hero\n"
+        "Hero collected 325 from pot\n"
+        "*** SUMMARY ***\n"
+        "Total pot 325 | Rake 0\n"
+    )
+    parsed = parse_pokerstars(text)
+    assert parsed.setup.ante == 25 and parsed.setup.bb_ante == 0   # unmoved
+    with pytest.raises(ValueError, match="reconciliation failed"):
+        reconcile(parsed)

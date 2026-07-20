@@ -30,6 +30,7 @@ wrong answer to either silently corrupts the replay rather than failing:
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from pokerlab.engine.cards import card_from_str
@@ -79,6 +80,62 @@ def _ante_posts(lines: list[str], idx: dict[str, int]) -> list[tuple[int, int, b
     return out
 
 
+def _replayed(setup: HandSetup, actions: list[tuple[int, Action]],
+              uncalled: int) -> tuple[int, tuple[int, ...]] | None:
+    """(contested pot, final stacks) the engine produces, or None if unreplayable."""
+    from pokerlab.engine.state import Hand      # local: avoids an import cycle
+
+    try:
+        hand = Hand(setup)
+        for seat, action in actions:
+            if hand.to_act != seat:
+                return None
+            hand.apply(action)
+        if not hand.is_terminal():
+            return None
+        return sum(hand.contrib) - uncalled, tuple(hand.final_stacks())
+    except Exception:                            # noqa: BLE001 - probe only
+        return None
+
+
+def _arbitrate_ante(setup: HandSetup, actions: list[tuple[int, Action]],
+                    stated_pot: int, uncalled: int,
+                    stated_final: tuple[int, ...]) -> HandSetup:
+    """Let the stated Total pot settle an ambiguous ante reading (finding [H5]).
+
+    "N posts the ante X" is textually ambiguous between a per-player ante and a
+    modern big-blind ante, and the poster's identity — the rule `_read_antes`
+    uses — is only decisive when the file names the big blind as the poster.
+    Where it is not, the SUMMARY's Total pot arbitrates: the two readings put
+    different amounts of dead money in, so at most one of them reproduces it.
+
+    The match required is the FULL reconciliation criterion — stated pot AND
+    stated final stacks — not the pot alone. The two readings put the same dead
+    money in from *different seats*, so a pot-only test could flip to a reading
+    that reproduces the total while charging the wrong player. Matching stacks
+    too means a flip can only ever produce a hand that fully reconciles.
+
+    Only ever flips a reading that does NOT reconcile to one that does, so a
+    hand the identity rule already got right can never be moved. If neither
+    reading reconciles the original is kept and reconciliation drops the hand
+    loudly, which is the correct outcome for a hand we cannot model.
+    """
+    if not (setup.ante or setup.bb_ante) or not stated_pot:
+        return setup
+    want = (stated_pot, stated_final)
+    if _replayed(setup, actions, uncalled) == want:
+        return setup                             # identity rule already agrees
+    amount = setup.ante or setup.bb_ante
+    flipped = dataclasses.replace(
+        setup,
+        ante=0 if setup.ante else amount,
+        bb_ante=amount if setup.ante else 0,
+    )
+    if _replayed(flipped, actions, uncalled) == want:
+        return flipped
+    return setup
+
+
 def _bb_poster(lines: list[str], idx: dict[str, int]) -> int | None:
     """Engine seat index of whoever posts the big blind, if the text says."""
     for ln in lines:
@@ -113,11 +170,19 @@ def _read_antes(lines: list[str], idx: dict[str, int]) -> tuple[int, int]:
     if not posts:
         return 0, 0
     if any(is_bb for _, _, is_bb in posts):
-        return 0, next(amt for _, amt, is_bb in posts if is_bb)
+        return 0, max(amt for _, amt, is_bb in posts if is_bb)
+    # The ante is the amount everyone OWES, so it is the maximum posted, not the
+    # first line (round-3 finding [H1]). A player too short to pay in full posts
+    # a partial ante and is all-in; if that line happens to come first — which it
+    # does whenever the short stack sits in an earlier seat — reading posts[0]
+    # takes the *shortfall* as the table ante and undercharges every other seat.
+    # The engine already clamps each seat to its stack (`_post_ante`), so passing
+    # the full ante is what makes the short stack come out right too.
+    amount = max(amt for _, amt, _ in posts)
     seats = {seat for seat, _, _ in posts}
     if len(seats) == 1 and posts[0][0] == _bb_poster(lines, idx):
-        return 0, posts[0][1]
-    return posts[0][1], 0
+        return 0, amount
+    return amount, 0
 
 
 def _button_index(seat_nos: list[int], button_seat: int) -> int:
@@ -224,15 +289,22 @@ def parse_hand(text: str, *, site: str, header_re: re.Pattern) -> ParsedHand:
         if in_actions:
             _parse_action(ln, idx, street_commit, contributed, actions)
 
-    setup = HandSetup(
-        stacks=tuple(stacks),
-        button=button,
-        bb=bb,
-        sb=sb,
-        ante=ante,
-        hole=tuple(hole),
-        board=tuple(board),
-        bb_ante=bb_ante,
+    setup = _arbitrate_ante(
+        HandSetup(
+            stacks=tuple(stacks),
+            button=button,
+            bb=bb,
+            sb=sb,
+            ante=ante,
+            hole=tuple(hole),
+            board=tuple(board),
+            bb_ante=bb_ante,
+        ),
+        actions=actions,
+        stated_pot=total_pot,
+        uncalled=uncalled,
+        stated_final=tuple(stacks[i] - contributed[i] + collected[i]
+                           for i in range(n)),
     )
     return ParsedHand(
         site=site,
