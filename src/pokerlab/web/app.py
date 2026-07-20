@@ -90,6 +90,27 @@ EV_UNITS: dict[str, str] = {
     "icm": "ICM-$",
 }
 
+# WHICH ORACLE decided the best action, in the feedback line's own words
+# (round-4 finding [10]). `_explain` said "Chart plays X" for every drill —
+# true today only because every drill is chart-sourced, which is precisely the
+# property the tier-source pin exists to guarantee and precisely what stops
+# holding the moment a solver-backed kind ships. That drill would have told the
+# user "Chart plays X" about a CFR solve: a false provenance claim on the one
+# line they read after every answer.
+#
+# A third axis alongside `tier` and `ev_unit`, and independent of both — the
+# tier says how exact the answer is, the unit says what the loss is measured
+# in, this says who produced it. Keyed by `Solution.source` (types.py owns that
+# vocabulary); a test pins that every source the generator emits has an entry.
+#
+# Only sources that actually exist are listed. Pre-writing copy for oracles
+# nobody has built would be the same unwarranted-blanket-claim defect one level
+# up — a new source must fail loudly here, not inherit a sentence written for a
+# different one.
+SOURCE_VERBS: dict[str, str] = {
+    "chart": "Chart plays",
+}
+
 
 class Answer(BaseModel):
     drill_id: str
@@ -127,15 +148,18 @@ def _spot_json(drill: gen.Drill) -> dict:
     }
 
 
-def _explain(result, action: str, unit: str) -> str:
-    """Feedback line. `unit` names what the EV loss is denominated in.
+def _explain(result, action: str, unit: str, verb: str) -> str:
+    """Feedback line. `unit` denominates the EV loss; `verb` names the oracle.
 
-    The unit is passed in rather than hardcoded (round-3 finding [P7']): this
-    string said "bb" for every drill kind, including ICM drills whose ev_loss
-    is a $-delta ~25x larger per unit. See EV_UNITS.
+    Both are passed in rather than hardcoded, for the same reason and from the
+    same defect class. The unit said "bb" for every drill kind, including ICM
+    drills whose ev_loss is a $-delta ~25x larger per unit (round-3 [P7']). The
+    verb said "Chart plays" for every drill, which would have claimed chart
+    provenance for a solver-graded answer the moment one shipped (round-4 [10]).
+    See EV_UNITS and SOURCE_VERBS.
     """
     verdict = "Correct" if result.correct else "Incorrect"
-    return (f"{verdict}. Chart plays {result.best_action} here — you chose "
+    return (f"{verdict}. {verb} {result.best_action} here — you chose "
             f"{action} (freq {result.chosen_frequency:.0%}, "
             f"EV loss {result.ev_loss_bb:.2f}{unit}).")
 
@@ -198,7 +222,8 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 "ev_unit": EV_UNITS[drill.kind],
                 "best_action": result.best_action,
                 "chosen_frequency": result.chosen_frequency,
-                "explanation": _explain(result, ans.action, EV_UNITS[drill.kind]),
+                "explanation": _explain(result, ans.action, EV_UNITS[drill.kind],
+                                       SOURCE_VERBS[drill.solution.source]),
             }
             last["drill_id"], last["response"] = ans.drill_id, payload
             return payload

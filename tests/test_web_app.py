@@ -222,6 +222,61 @@ def test_every_drill_kind_has_a_declared_ev_unit():
     assert kinds <= set(EV_UNITS), f"drill kinds with no declared unit: {kinds - set(EV_UNITS)}"
 
 
+def test_every_solution_source_has_a_declared_verb():
+    """Completes the set of three (round-4 [10]).
+
+    `_explain` opened every feedback line with the literal "Chart plays" — true
+    today only because every drill really is chart-sourced, which is exactly
+    what the f0c1bd8 tier pin exists to guarantee and exactly the thing that
+    stops being true the moment a solver-backed kind ships. The first such drill
+    would have told the user "Chart plays X" about a CFR solve.
+
+    Same shape as the EV_UNITS kind pin above and the tier-source pin in
+    test_web_report.py: the generator owns the vocabulary, app.py owns only the
+    operator-facing copy, and this asserts the two agree. Deliberately NOT
+    solved by inventing labels for sources that do not exist yet — authoring
+    copy for an oracle nobody has built is how a blanket claim gets shipped,
+    which is the f0c1bd8 defect class itself.
+    """
+    from pokerlab.drills import generator as gen
+    from pokerlab.web.app import SOURCE_VERBS
+
+    sources = {d.solution.source for d in gen.default_population()}
+    assert sources <= set(SOURCE_VERBS), (
+        f"solution sources with no declared verb: {sources - set(SOURCE_VERBS)}")
+
+
+def test_the_feedback_line_names_the_oracle_that_actually_graded_it(
+        client, monkeypatch):
+    """The rendered string FOLLOWS the map — proven by moving the map.
+
+    Asserting `SOURCE_VERBS[source] in explanation` against the shipped map
+    proves nothing while only one source exists: "chart" maps to "Chart plays",
+    so the derived string and the old hardcoded literal are byte-identical and
+    the test passes either way. Verified, not assumed — re-hardcoding the
+    literal left that assertion green.
+
+    So the map is redirected to a sentinel first. A hardcoded line cannot
+    follow it, and this fails; a derived line has no choice but to. Same lesson
+    as the hunter's lines[0] pin: an assertion that cannot distinguish the
+    implementation from its alternative is not yet a test of the thing it names.
+    """
+    import pokerlab.web.app as webapp
+    from pokerlab.drills import generator as gen
+
+    drill = gen.default_population()[0]
+    assert drill.solution.source == "chart"
+    monkeypatch.setitem(webapp.SOURCE_VERBS, "chart", "Sentinel oracle plays")
+
+    res = client.post("/api/drill/answer",
+                      json={"drill_id": drill.drill_id,
+                            "action": drill.legal_actions[0]})
+    assert res.status_code == 200
+    explanation = res.json()["explanation"]
+    assert "Sentinel oracle plays" in explanation
+    assert "Chart plays" not in explanation
+
+
 def test_units_and_tier_are_independent_axes(client):
     """ICM drills are tier-1 chart-graded AND denominated in $; both, not either.
 
