@@ -1,8 +1,10 @@
 """Slice H: VecEnv shape/determinism/auto-reset/throughput (impl doc §3 H)."""
 
+import os
 import time
 
 import numpy as np
+import pytest
 
 from pokerlab.env.encoding import OBS_DIM, num_actions
 from pokerlab.env.vec import EnvConfig, VecEnv
@@ -72,11 +74,26 @@ def test_runs_with_perturbation_bot_villain() -> None:
 
 
 def test_throughput_smoke() -> None:
+    # Load-robust by construction (round-2 finding [E52]). The bar measures how
+    # much CPU the vectorized step path *costs*, so it must be read off
+    # process_time, not wall time: wall time also charges us for every other
+    # process on the box. Measured on this machine, 2x CPU oversubscription
+    # degrades the wall-clock number 2.4x but the process_time number only 1.2x.
+    # That is a mitigation, not immunity -- a heavily oversubscribed box (a
+    # parallel-agent session, where several suites each spawn cpu_count-2
+    # differential workers) can still starve it, so a genuinely loaded box
+    # SKIPS loudly instead of reporting a red that means nothing.
+    #
+    # Deliberately NOT slow/bench-gated: per plan Slice H this is a fast-suite
+    # behavior, and round-1 finding [2] is the standing lesson that gating a
+    # milestone assertion into a suite nobody runs empties it silently.
+    if os.getloadavg()[0] > 2 * (os.cpu_count() or 1):
+        pytest.skip(f"box load {os.getloadavg()[0]:.1f} too high to time throughput")
     env = VecEnv(64, EnvConfig(seats=6), seed=5)
     env.reset()
-    t0 = time.time()
+    t0 = time.process_time()
     for _ in range(300):
         env.step(_call_policy(64))
-    elapsed = time.time() - t0
+    elapsed = time.process_time() - t0
     hands_per_min = env.hands_dealt / elapsed * 60
     assert hands_per_min >= 50_000, f"only {hands_per_min:.0f} hands/min"

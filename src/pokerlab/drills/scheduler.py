@@ -69,7 +69,11 @@ def _due_iso(now: datetime, interval_days: float) -> str:
     try:
         return (now + timedelta(days=_clamp_interval(interval_days))).isoformat()
     except (OverflowError, OSError, ValueError):
-        return datetime.max.replace(tzinfo=now.tzinfo).isoformat()
+        # Saturate in UTC, not in `now`'s zone (round-3 finding [A3]): a
+        # datetime.max carrying a non-UTC offset overflows again the moment
+        # anything calls .astimezone(utc) on it, which _due_dt does on every
+        # comparison and sort. UTC is the one zone that conversion is a no-op in.
+        return datetime.max.replace(tzinfo=timezone.utc).isoformat()
 
 
 def review(state: SRState, correct: bool, now: datetime) -> SRState:
@@ -123,10 +127,15 @@ def _due_dt(state: SRState) -> datetime:
     earlier-sorting-but-later "…T23:00-05:00" (round-2 finding [E44]). An
     unparseable stored value reads as maximally overdue so it gets served and
     re-stamped rather than crashing the whole ordering.
+
+    An OverflowError is caught alongside the parse errors (round-3 finding
+    [A3]): a saturated far-future due date stored with a non-UTC offset raises
+    from .astimezone() rather than from parsing, and an uncaught raise here
+    takes down every ordering, not just the one row.
     """
     try:
         return _as_utc(datetime.fromisoformat(state.due))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return datetime.min.replace(tzinfo=timezone.utc)
 
 

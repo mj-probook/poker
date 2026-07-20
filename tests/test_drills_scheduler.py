@@ -238,3 +238,19 @@ def test_a_lapse_stays_due_until_it_is_answered_correctly():
         assert sch.select_next(conn, NOW, categories=cats) == key
     sch.schedule_attempt(conn, key, correct=True, now=NOW)    # finally correct
     assert sch.select_next(conn, NOW, categories=cats) != key  # yields the floor
+
+
+def test_due_dt_survives_a_saturated_far_future_stamp():
+    """[A3] _due_iso saturates to datetime.max; that value must still be
+    orderable. Stored with a non-UTC offset it raises OverflowError from
+    .astimezone(), not from parsing -- and an uncaught raise here takes down
+    every ordering, not just the one row."""
+    from datetime import timezone as _tz
+
+    sat = sch._due_iso(datetime.max - timedelta(days=1), 999.0)
+    assert sch._due_dt(sch.SRState("k", 2.5, 1.0, 0, sat))       # no raise
+    # an explicitly non-UTC saturated stamp is the hostile case
+    hostile = datetime.max.replace(tzinfo=_tz(timedelta(hours=-5))).isoformat()
+    st = sch.SRState("k", 2.5, 1.0, 0, hostile)
+    assert sch._due_dt(st)                                        # no raise
+    assert sch.next_due([st, sch.SRState("n", 2.5, 0.0, 0, NOW.isoformat())])
