@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from pokerlab.drills import generator as gen
 from pokerlab.hh.ggpoker import parse_ggpoker
 from pokerlab.hh.persist import persist_session
 from pokerlab.hh.pokerstars import parse_pokerstars
@@ -115,6 +116,31 @@ def test_report_js_renders_the_servers_tier_label_rather_than_its_own():
     assert "population_frequency" in js
     # a missing baseline is "unknown", never a rendered 0%
     assert "no baseline" in js
+
+
+def test_the_tier_1_claim_on_every_drill_is_warranted_by_its_solution():
+    """`_spot_json` asserts tier 1 for EVERY drill — pin that it is entitled to.
+
+    The comment beside that line says the tier is "stated, not assumed, because
+    a future solver-backed drill kind must not silently inherit a
+    'chart-graded' claim". It described a protection that did not exist: the
+    value was hardcoded and nothing checked the drill was chart-sourced, so the
+    claim held for all 5408 drills on the strength of a 1-drill pin elsewhere.
+    A comment asserting an enforcement is worse than no comment — it stops the
+    next reader re-deriving it (r2-edge-hunter). Fourth instance of the
+    recorded-vs-landed pattern, this time as a code comment.
+
+    This is the enforcement. Direct analogue of the EV_UNITS kind pin: the
+    served tier label is only honest while every drill really is answered by
+    the in-house chart engine, so the first non-chart drill kind fails HERE
+    rather than shipping a false "exact — chart-graded" badge on a load-bearing
+    UI surface (plan §9).
+    """
+    sources = {d.solution.source for d in gen.default_population()}
+    assert sources == {"chart"}, (
+        f"_spot_json claims TIER_CHART for every drill, but the population "
+        f"carries sources {sorted(sources)} — the tier label is no longer "
+        f"warranted and must be derived per drill, not hardcoded")
 
 
 # --------------------------------------------------------------------------- #
