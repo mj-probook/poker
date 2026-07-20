@@ -265,3 +265,31 @@ def test_chunking_a_session_file_is_byte_faithful():
     for name in ("ps_session_multi.txt", "ps_session_mixed.txt"):
         text = (FIXTURES / name).read_text()
         assert "".join(split_pokerstars(text)) == text, name
+
+
+def test_a_multi_hand_pre_split_row_is_a_known_boundary():
+    """[R2'] residue, stated so it is a decision rather than a discovery.
+
+    A row written before 1d80de9 recorded "the WHOLE FILE failed". After
+    splitting, that is no longer a representable outcome for a multi-hand file:
+    no chunk equals the file, so no re-import can match it. Byte-faithfulness
+    (7c5c276) fixes the single-hand case and cannot reach this one.
+
+    Ruled a documented boundary rather than a migration because zero such
+    databases exist. This test exists so that stays TRUE BY CHOICE — if someone
+    later decides the residue is worth clearing, this fails and points at the
+    decision instead of letting it look like an accident.
+    """
+    from pokerlab.hh.pokerstars import split_pokerstars
+
+    whole = (FIXTURES / "ps_session_multi.txt").read_text()
+    chunks = split_pokerstars(whole)
+    assert len(chunks) > 1, "fixture must hold several hands"
+    assert not any(c == whole for c in chunks), (
+        "no chunk of a multi-hand file can equal the file")
+
+    conn = db.connect()
+    db.insert_failed_hand(conn, "PokerStars", whole, "pre-split", AT)
+    for c in chunks:                      # a full successful re-import
+        db.clear_failed_hand(conn, "PokerStars", c)
+    assert len(db.failed_hands(conn)) == 1, "the boundary: still orphaned"

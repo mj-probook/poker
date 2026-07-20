@@ -260,6 +260,18 @@ def clear_failed_hand(conn: sqlite3.Connection, site: str, raw: str, *,
     count would keep reporting a hand that now grades fine — the table would
     answer "what is broken" with "what was ever broken", and the summary it
     exists to feed would be permanently wrong.
+
+    KNOWN BOUNDARY, [R2'] (documented, not fixed — deliberately):
+    a row written BEFORE 1d80de9 for a MULTI-hand file does not clear. It
+    recorded "the whole file failed", which after splitting is no longer a
+    representable outcome: no chunk equals the file, so no re-import can match
+    it. Single-hand legacy rows DO clear as of 7c5c276, which made the chunker
+    byte-faithful — a single-hand file chunks to itself exactly, trailing
+    newline and CRLF included. Ruled a boundary rather than a migration because
+    zero such databases exist (DEFAULT_DB is absent, and the window that could
+    have produced one spans a few hours of the same day); writing migration
+    code for zero rows is the speculative-infrastructure rule exactly. If such
+    a database ever surfaces, the remedy is manual deletion of the stale row.
     """
     cur = conn.execute(
         "DELETE FROM failed_hands WHERE site=? AND raw=?", (site, raw))
