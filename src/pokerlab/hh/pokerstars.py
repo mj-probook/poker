@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from pokerlab.hh._common import parse_hand, split_hands
+from pokerlab.hh._common import parse_hand, peek_hand_uid, split_hands
 from pokerlab.hh.model import ParsedHand
 
 # The hand-header prefix, used to split session files into per-hand chunks.
@@ -45,3 +45,12 @@ def parse_pokerstars_file(text: str) -> list[ParsedHand]:
     does not duplicate it.
     """
     return [parse_pokerstars(c) for c in split_pokerstars(text)]
+
+
+def peek_pokerstars_uid(text: str) -> str | None:
+    """The hand number from this chunk's header, or None if it won't parse.
+
+    For the failure path: a body-level failure still has a real hand number and
+    should be recorded under it, not as "unidentified" ([R1b]).
+    """
+    return peek_hand_uid(text, _HEADER)

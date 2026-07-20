@@ -252,6 +252,32 @@ def split_hands(text: str, boundary: str) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
+def peek_hand_uid(text: str, header_re: re.Pattern) -> str | None:
+    """The hand number from a chunk's header line, or None if it won't parse.
+
+    A probe for the failure path: a hand can die in its BODY (no table line,
+    desynced actions) long after its header parsed perfectly, and that failure
+    should be recorded under the number the file gave it rather than as
+    "unidentified" while the number sits in the stored raw text (round-4
+    finding [R1b]).
+
+    Deliberately reuses the site's own `header_re` rather than a second pattern
+    describing what a hand number looks like — two homes for that would drift,
+    and the drift would be silent. Reads `lines[0]` ONLY, exactly as
+    `parse_hand` does, so peek and parse can never disagree about which line is
+    the header or what it says.
+
+    Returns None rather than raising, and None is a MEANINGFUL answer: a hand
+    whose header itself is malformed genuinely has no number we can attribute,
+    and inventing one would be worse than silence.
+    """
+    lines = text.strip().splitlines()
+    if not lines:
+        return None
+    m = header_re.search(lines[0])
+    return m["hid"] if m else None
+
+
 def parse_hand(text: str, *, site: str, header_re: re.Pattern,
                boundary: str | None = None) -> ParsedHand:
     lines = [ln.rstrip("\n") for ln in text.strip().splitlines()]

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from pokerlab.hh._common import parse_hand, split_hands
+from pokerlab.hh._common import parse_hand, peek_hand_uid, split_hands
 from pokerlab.hh.model import ParsedHand
 
 # See pokerstars.BOUNDARY. GGPoker shares `_common.parse_hand`, so it shared the
@@ -46,3 +46,12 @@ def split_ggpoker(text: str) -> list[str]:
 def parse_ggpoker_file(text: str) -> list[ParsedHand]:
     """Every hand in a session file. See `pokerstars.parse_pokerstars_file`."""
     return [parse_ggpoker(c) for c in split_ggpoker(text)]
+
+
+def peek_ggpoker_uid(text: str) -> str | None:
+    """The hand number from this chunk's header, or None if it won't parse.
+
+    For the failure path: a body-level failure still has a real hand number and
+    should be recorded under it, not as "unidentified" ([R1b]).
+    """
+    return peek_hand_uid(text, _HEADER)

@@ -19,8 +19,10 @@ from pathlib import Path
 import pytest
 
 from pokerlab.hh.decisions import extract_decisions
-from pokerlab.hh.ggpoker import parse_ggpoker
-from pokerlab.hh.pokerstars import parse_pokerstars
+from pokerlab.hh.ggpoker import (parse_ggpoker, peek_ggpoker_uid,
+                                 split_ggpoker)
+from pokerlab.hh.pokerstars import (parse_pokerstars, peek_pokerstars_uid,
+                                    split_pokerstars)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hh"
 
@@ -365,3 +367,99 @@ def test_leading_blank_lines_do_not_lose_bytes():
 
     raw = "\n\n" + _read("ps_preflop_fold.txt")
     assert "".join(split_pokerstars(raw)) == raw
+
+
+# --- uid peek: naming a chunk whose BODY will not parse ------------------
+#
+# The CLI records a failed chunk under a hand uid so re-imports can find it.
+# It cannot get that uid from `parse_*`, because the chunks it needs to name
+# are exactly the ones parsing threw on. `peek_*_uid` is the header-only read
+# for that case; these tests pin both of its answers, since "None" is as
+# load-bearing as a uid — it is what tells the caller the hand is genuinely
+# unidentifiable rather than merely unparsed.
+
+
+def _corrupt_body(raw: str) -> str:
+    """A hand with an intact header and a body `parse_hand` rejects."""
+    head, _, _ = raw.partition("\n")
+    return head + "\nTable 'x' 6-max Seat #1 is the button\n"
+
+
+@pytest.mark.parametrize("fixture, peek, parse", [
+    ("ps_preflop_fold.txt", peek_pokerstars_uid, parse_pokerstars),
+    ("gg_allin_jam.txt", peek_ggpoker_uid, parse_ggpoker),
+])
+def test_peek_uid_survives_a_body_that_will_not_parse(fixture, peek, parse):
+    """The point of the helper: name the hand even when reading it fails.
+
+    Asserted against the SAME hand parsed intact, so the test cannot pass by
+    peeking out some other string that merely looks like a hand number.
+    """
+    raw = _read(fixture)
+    expected = parse(raw).hand_id
+    broken = _corrupt_body(raw)
+    with pytest.raises(Exception):
+        parse(broken)                      # precondition: the body really fails
+    assert peek(broken) == expected
+
+
+@pytest.mark.parametrize("peek", [peek_pokerstars_uid, peek_ggpoker_uid])
+@pytest.mark.parametrize("text", [
+    "",                                    # nothing at all
+    "   \n\n  \n",                         # whitespace only
+    "PokerStars Hand #: Tournament #1, - Level V (50/100)\n",   # no hand number
+    "Poker Hand #TM1: not a tournament header\n",               # truncated
+    "Seat 1: Hero (5000 in chips)\n",      # a body line, no header
+])
+def test_peek_uid_is_none_when_the_header_will_not_parse(peek, text):
+    """None means "cannot be named", and must never be an exception or "".
+
+    The caller branches on it to choose between a uid-keyed row and an
+    unidentified one, so a raise here would take down the very failure path
+    this helper exists to keep alive.
+    """
+    assert peek(text) is None
+
+
+@pytest.mark.parametrize("fixture, peek, parse", [
+    ("ps_session_multi.txt", peek_pokerstars_uid, parse_pokerstars),
+    ("gg_session_multi.txt", peek_ggpoker_uid, parse_ggpoker),
+])
+def test_peek_and_parse_never_disagree_across_a_session(fixture, peek, parse):
+    """Peek reads the same line, with the same regex, as parse.
+
+    Two reads of one header are two chances to drift; this is the assertion
+    that keeps them one. If a future change gives peek its own pattern, this
+    fails on the first hand whose header the patterns read differently.
+    """
+    chunks = split_pokerstars(_read(fixture)) if "ps_" in fixture \
+        else split_ggpoker(_read(fixture))
+    assert len(chunks) > 1
+    for c in chunks:
+        assert peek(c) == parse(c).hand_id
+
+
+@pytest.mark.parametrize("peek, boundary, header", [
+    (peek_pokerstars_uid, "PokerStars Hand #",
+     "PokerStars Hand #240000000001: Tournament #3900000001, $10+$1 USD "
+     "Hold'em No Limit - Level V (50/100) - 2024/03/01 20:15:00 ET"),
+    (peek_ggpoker_uid, "Poker Hand #",
+     "Poker Hand #TM4400000002: Tournament #44000002, Bounty Hold'em No Limit "
+     "- Level3(50/100) - 2024/03/02 18:00:00"),
+])
+def test_peek_uid_reads_the_header_line_only(peek, boundary, header):
+    """A uid found in the BODY must not be mistaken for this chunk's own.
+
+    Reading the whole chunk instead of its first line passes every other test
+    here, because in well-formed input the header is line one either way. It
+    diverges exactly where it does damage: a chunk whose own header is broken,
+    quoting a valid header further down (a chat line, a pasted hand, a player
+    named after one). Line-only returns None — "cannot be named" — and the
+    caller records an unidentified failure. Whole-chunk returns a real hand
+    number belonging to a DIFFERENT hand, and the failure row lands on top of
+    another hand's identity, where no re-import will ever look for it.
+
+    None is recoverable. A confidently wrong uid is not.
+    """
+    chunk = f"{boundary}garbage-not-a-header\nHero said, \"{header}\"\n"
+    assert peek(chunk) is None
