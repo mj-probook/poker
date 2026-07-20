@@ -97,6 +97,18 @@
 ### 5.1 MTT fundamentals first
 Push/fold Nash (**≤20bb**, drilled across 5–20bb × positions), resteal, bubble and pay-jump ICM, final-table ICM, ante-adjusted full-ring open/defend ranges. **Answer keys come from my own chart engine (M1.5)** — computed, verifiable, ToS-clean. GTO Wizard is a manual cross-check during study, never a data source.
 
+**Syllabus status (rev 3.2 — as-built honesty table; the round-3 review found the gap between this list and the shipped drill population was recorded nowhere):**
+| item | status |
+|---|---|
+| Push/fold 5–20bb × SB/BB (ante-bucketed per §5.3) | **built** |
+| Bubble ICM (4-player fixture set) | **built** |
+| Resteal drills | deferred — no code, no answer-key path yet |
+| Ante-adjusted full-ring open/defend ranges | deferred |
+| Final-table / pay-jump ladder variation | deferred (single bubble ladder shipped) |
+| Postflop tier-2 drills from own solves | deferred — solves exist, no drill kind consumes them |
+| Population-heuristic tier-3 flags as training signal | wired in wave 3 (flags persisted + reported) |
+Deferrals are scope calls, not oversights — recorded here so the syllabus can be extended deliberately.
+
 ### 5.2 Multiway + postflop study
 Full-ring single-raised and 3-bet pots, drilled from my own TexasSolver/M3 solves plus **population heuristics** — concretely: a frequency table (VPIP / PFR / 3-bet / c-bet / fold-vs-c-bet by position and street) sourced from public aggregate stats and my own imported hands, stored as a versioned config file, consumed by the drill generator (as priors on villain ranges) and by §6 bots (as target frequencies). Candidate-action count per drill is spot-dependent (the solver's meaningfully distinct options), not a fixed 3.
 
@@ -105,7 +117,7 @@ Import hand histories — **v1 sites: PokerStars (auto-saved local files) and GG
 
 Every decision routes to exactly one grading tier:
 - **Tier 1 — chart-graded (exact, instant):** all preflop and ≤20bb jam/fold/resteal decisions, vs the M1.5 chart engine.
-- **Tier 2 — solver-graded (accuracy bar applies):** heads-up (or HU-collapsed) postflop spots, vs the cached solution library (SpotKey lookup); **library misses are queued for overnight batch solves** — a session report is marked *partial* until its batch completes. Activates fully once M3 ships; before that, tier-2 spots fall to tier 3.
+- **Tier 2 — solver-graded (accuracy bar applies):** heads-up (or HU-collapsed) postflop spots, vs the cached solution library (SpotKey lookup); **library misses are queued for overnight batch solves** — a session report is marked *partial* until its batch completes. Activates fully once M3 ships; before that, tier-2 spots fall to tier 3. *(Rev 3.2 honesty note: as built, tier-2 solves approximate both players' RANGES as uniform and stacks as symmetric — the accuracy bar applies to the solve given those inputs. The approximation is recorded in each Solution's provenance (`range_ctx`) and in the leak report; range modeling from the actual line is future work, not a silent assumption.)*
 - **Tier 3 — best-available (labeled approximate):** genuine multiway postflop, graded against population-heuristic lines. **No EV-loss number is reported for tier 3** — only frequency-deviation flags — because per the plan's own theory section no trustworthy oracle exists there.
 
 Leak taxonomy (pinned): categories keyed by the canonical 4-part key **formation × street × action-type × depth** (rev 3.1: depth added to match the build — a snapped bucket of 5/8/10/15/20bb for preflop jam/fold spots, `-` postflop; ICM variants take a `.icm` formation suffix; the key vocabulary is owned by one module, `drills/categories.py`, and shared verbatim by grading and spaced repetition — that shared key IS the leak→drill join), aggregated over tier-1/2 gradings only. "Top-5 leaks by EV-loss/100" is computed on the exact tiers; tier-3 deviations are listed separately. Spaced repetition (SM-2/Leitner over `sr_state`) resurfaces the worst categories as drills.
