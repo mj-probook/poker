@@ -147,7 +147,8 @@ def persist_session(conn, parsed_hands: list[ParsedHand], report: SessionReport,
                                   # never names a best action (schema: best TEXT
                                   # NOT NULL), and neither does an ungraded spot
                                   g.best or "", g.ev_loss, g.leak_key, graded_at,
-                                  commit=False)
+                                  commit=False, frequency=g.frequency,
+                                  flags=g.flags)
                 n_graded += 1
                 if g.ev_loss is not None:
                     # THE LEAK->DRILL JOIN (wave-3 [P1']). An exact-tier

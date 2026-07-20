@@ -18,6 +18,7 @@ Every *derived* metric — leak rankings, accuracy trends — is a query in
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
@@ -115,12 +116,22 @@ def all_sr_state(conn: sqlite3.Connection) -> list[dict]:
 # --------------------------------------------------------------------------- #
 def insert_grading(conn: sqlite3.Connection, hand_id: int, decision_idx: int,
                    tier: int, chosen: str, best: str, ev_loss: float | None,
-                   leak_key: str, graded_at: str, *, commit: bool = True) -> int:
+                   leak_key: str, graded_at: str, *, commit: bool = True,
+                   frequency: float | None = None,
+                   flags: Iterable[str] = ()) -> int:
+    """Insert one graded decision.
+
+    `frequency`/`flags` are the reference's read on the hero's action — for
+    tier 3 they are the ONLY output it may carry (plan §5.3), so they are
+    optional here but never optional in meaning. Flags are stored comma-joined.
+    """
     cur = conn.execute(
         "INSERT INTO gradings(hand_id, decision_idx, tier, chosen, best,"
-        " ev_loss, leak_key, graded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        " ev_loss, leak_key, graded_at, frequency, flags)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (hand_id, decision_idx, tier, chosen, best,
-         None if ev_loss is None else float(ev_loss), leak_key, graded_at),
+         None if ev_loss is None else float(ev_loss), leak_key, graded_at,
+         None if frequency is None else float(frequency), ",".join(flags)),
     )
     if commit:
         conn.commit()

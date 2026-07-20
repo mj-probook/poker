@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS gradings(
   -- postflop; formation takes a '.icm' suffix for ICM variants.
   leak_key TEXT NOT NULL,
   graded_at TEXT NOT NULL,
+  -- The frequency the reference assigns the hero's action, and the deviation
+  -- flags raised against it. For tiers 1-2 that is the CHOSEN action's own
+  -- frequency (context for the ev_loss); for tier 3 it is the POPULATION
+  -- frequency, and these two columns are the entire honest output of that tier
+  -- (plan §5.3: no EV-loss number, only frequency-deviation flags). The grader
+  -- computed both from the start and persist discarded them (wave-3 [P3']).
+  -- `flags` is a comma-joined list, '' when nothing was flagged.
+  frequency REAL,
+  flags TEXT NOT NULL DEFAULT '',
   -- A decision is graded once. Two concurrent drains can both see a batch row
   -- 'pending', both re-derive it and both grade it; without this the duplicate
   -- lands silently and double-counts into every leak statistic downstream

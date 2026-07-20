@@ -124,14 +124,28 @@ def category_priority(conn: sqlite3.Connection) -> list[dict]:
 
 
 def tier3_frequency_report(conn: sqlite3.Connection) -> list[dict]:
-    """Tier-3 (multiway) decisions grouped by leak_key with counts — the
-    frequency signal, listed separately from the EV-loss ranking. No ev_loss
-    is ever surfaced here (it is NULL for tier 3 by construction)."""
+    """Tier-3 (multiway) decisions with the frequency signal that IS their
+    grading — listed separately from the EV-loss ranking.
+
+    One row per (leak_key, chosen action): how often the hero took that line,
+    what frequency the population table gives it, and any deviation flags
+    raised. That flag is the entire honest output of tier 3 (plan §5.3), and it
+    used to be computed and then thrown away, leaving a bare count that said
+    nothing about whether the line was actually unusual (wave-3 [P3']).
+
+    No ev_loss is ever surfaced here — it is NULL for tier 3 by construction,
+    and mixing tiers in one number is exactly what the tier system prevents.
+
+    `population_frequency` is None where the table has no baseline for the spot;
+    that is "unknown", not "never played", and callers must not read it as 0.
+    """
     rows = conn.execute(
-        "SELECT leak_key, COUNT(*) AS decisions"
+        "SELECT leak_key, chosen, COUNT(*) AS decisions,"
+        "       frequency AS population_frequency, flags"
         "  FROM gradings"
         " WHERE tier = 3"
-        " GROUP BY leak_key"
-        " ORDER BY decisions DESC, leak_key"
+        " GROUP BY leak_key, chosen, frequency, flags"
+        " ORDER BY decisions DESC, leak_key, chosen"
     )
-    return [dict(r) for r in rows]
+    return [dict(r) | {"flags": [f for f in r["flags"].split(",") if f]}
+            for r in rows]
