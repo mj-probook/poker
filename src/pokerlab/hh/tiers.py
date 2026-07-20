@@ -28,6 +28,17 @@ ROUTING_RULES: list[tuple[str, Callable[[str, int], bool], int]] = [
 ]
 
 
+# The ONE place a tier's honesty claim is worded. Plan §9 makes these
+# load-bearing UI, "not fine print": every surface that shows a graded number
+# has to say which oracle produced it, and tier 3 has to say it has none. One
+# home so the drill page, the report page and the API cannot drift apart.
+TIER_LABELS: dict[int, str] = {
+    TIER_CHART: "exact — chart-graded",
+    TIER_SOLVER: "exact — solver-graded",
+    TIER_BEST_AVAILABLE: "approximate — population-graded, no EV loss",
+}
+
+
 def route_tier(street: str, num_in_pot: int) -> int:
     """Return the grading tier for a decision on ``street`` with ``num_in_pot``."""
     for _name, pred, tier in ROUTING_RULES:

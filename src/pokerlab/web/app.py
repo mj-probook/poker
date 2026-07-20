@@ -27,7 +27,9 @@ from pydantic import BaseModel
 from pokerlab.drills import generator as gen
 from pokerlab.drills import scheduler as sch
 from pokerlab.drills.scoring import score
-from pokerlab.store import db
+from pokerlab.hh.tiers import TIER_LABELS
+from pokerlab.store import db, views
+from pokerlab.types import TIER_BEST_AVAILABLE, TIER_CHART
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -42,6 +44,13 @@ def _spot_json(drill: gen.Drill) -> dict:
     return {
         "drill_id": drill.drill_id,
         "kind": drill.kind,
+        # Which oracle graded this, in the payload itself (plan §9: tier labels
+        # are load-bearing UI). Every drill the generator emits is answered by
+        # the in-house chart engine, so every drill is tier 1 — stated, not
+        # assumed, because a future solver-backed drill kind must not silently
+        # inherit a "chart-graded" claim.
+        "tier": TIER_CHART,
+        "tier_label": TIER_LABELS[TIER_CHART],
         "position": drill.position,
         "depth_bb": drill.depth_bb,
         "hand": drill.hand_label,
@@ -120,11 +129,52 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             last["drill_id"], last["response"] = ans.drill_id, payload
             return payload
 
+    @app.get("/api/report")
+    def report() -> dict:
+        """The training loop's read surface (wave-3 [P5']).
+
+        Deliberately shaped so the two grading regimes CANNOT be rendered as one
+        list: `leaks` is the exact-tier EV-loss ranking, `tier3` is its own
+        object carrying its own honesty label. Plan §9 — EV-loss stats never mix
+        tiers, and the label travels with the data rather than living in the
+        template, so no future page can drop it.
+        """
+        with lock:
+            counts = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM imported_hands)            AS hands,"
+                "       (SELECT COUNT(*) FROM gradings)                  AS graded,"
+                "       (SELECT COUNT(*) FROM batch_queue"
+                "         WHERE status IN ('pending', 'running'))        AS queued,"
+                "       (SELECT COUNT(*) FROM batch_queue"
+                "         WHERE status = 'failed')                       AS failed"
+            ).fetchone()
+            session = dict(counts)
+            # A queued row means some decision in this session has no answer key
+            # yet, which is exactly what plan §5.3 calls a PARTIAL session.
+            session["partial"] = session["queued"] > 0
+            return {
+                "session": session,
+                "leaks": views.hh_leak_report(conn, limit=5),
+                "tier3": {
+                    "label": TIER_LABELS[TIER_BEST_AVAILABLE],
+                    "rows": views.tier3_frequency_report(conn),
+                },
+                "gates": {
+                    "ev_loss_trend":
+                        views.ev_loss_per_100_by_category_over_time(conn),
+                    "accuracy_by_kind": views.accuracy_by_kind(conn),
+                },
+            }
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/report")
+    def report_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "report.html")
 
     app.state.conn = conn
     app.state.population = population
