@@ -74,8 +74,16 @@ def test_numpy_solver_matches_cfr_on_tiny_fixture():
 @pytest.mark.parametrize("depth", DEPTHS)
 def test_full_chip_profile_is_nash(depth):
     # 169-hand chip-EV solve: exploitability ≈ 0 within the model.
+    #
+    # Bar is 1e-5, not the 1e-3 this asserted through wave 3. PLAN §8 M1.5
+    # states the exit as "~1e-6 on the two-action game" and the solve meets it
+    # (measured 7.12e-7 at 5bb rising to 2.68e-6 at 20bb), but a 1e-3 assertion
+    # would have stayed green through a 370x regression -- passing CI while
+    # violating the stated exit by three orders ([R4-3]). The solve is
+    # deterministic, so the remaining 3.7x is headroom for float drift across
+    # platforms, not for behavior.
     sol = solve_jamfold(float(depth))
-    assert sol.exploitability < 1e-3
+    assert sol.exploitability < 1e-5
 
 
 def test_ranges_shrink_monotonically_with_depth():

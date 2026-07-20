@@ -52,7 +52,22 @@ def epsilon(pot_bb: float, *, bb_value: float = 1.0) -> float:
     overlap well in ε-multiples (chip-EV p50 7.4× / p90 24.4×; ICM p50 4.3× /
     p90 29.8×). It is a low-tail effect: chip-EV's p10 is 0.78× because the
     chip charts genuinely mix, while ICM's is 1.83× because its solve is
-    near-pure. Sharper solve, fewer near-indifferent spots.
+    near-pure — because THIS FIXTURE's solve is near-pure, which is a property
+    of its ladder shape rather than of ICM.
+
+    Sharpness tracks how steep the pay structure is, not whether ICM is used.
+    Re-probed on four ladders (r4 math audit): a FLAT ladder maximises ICM
+    pressure — only survival is priced, the solve goes fully pure, 0.0%
+    within-ε — while a TOP-HEAVY ladder prices chip accumulation and pushes the
+    game back toward chip-EV, mixing MORE than the chip charts do:
+
+        ICM 800/150/50   16.9% within-ε, p10 0.53×   (chip-EV: 12.3%, 0.78×)
+        ICM 900/60/40    14.8% within-ε, p10 0.61×
+
+    Two points on one curve, not two regimes. The bubble fixture's 1.8% is the
+    near-pure END of ICM's own range, not ICM's character, so "sharper solve,
+    fewer near-indifferent spots" is true of this solve and false as a claim
+    about ICM ([R4-11]).
     """
     return max(POT_EPS_FRAC * float(pot_bb), EV_FLOOR_BB) * float(bb_value)
 

@@ -48,7 +48,9 @@ def test_icm_solve_reports_a_verified_nash_gap():
     icm = solve_jamfold_icm((1000, 1000, 1000, 1000), 0, 1, _PAYOUTS, _BB_CHIPS)
     assert icm.exploitability == icm.exploitability, "exploitability is NaN"
     assert icm.exploitability >= 0.0
-    assert icm.exploitability < 1e-4
+    # 1e-6, not 1e-4: measured 2.57e-8, so the old bar left ~3900x of slack in
+    # which a regression would have passed unnoticed ([R4-3]).
+    assert icm.exploitability < 1e-6
 
 
 def test_icm_nash_gap_holds_on_the_pressured_bubble_fixture():
