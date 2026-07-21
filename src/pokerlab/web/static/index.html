@@ -5,26 +5,243 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>pokerlab · push/fold drills</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto;
-           padding: 0 1rem; line-height: 1.5; }
-    #description { font-size: 1.4rem; font-weight: 600; }
-    #meta, #tournament { color: #555; }
-    #actions { margin: 1.2rem 0; display: flex; gap: 0.6rem; }
-    #actions button { font-size: 1.1rem; padding: 0.5rem 1.2rem; cursor: pointer; }
-    #feedback { min-height: 3rem; font-size: 1.05rem; }
-    #next { padding: 0.4rem 1rem; }
-    .correct { color: #157f3b; }
-    .incorrect { color: #b3261e; }
+    /* ---------- the room ---------- */
+    :root {
+      --wall-hi: #2b2320; --wall-lo: #17110f;
+      --wood: #5a3a22; --wood-hi: #7a5230; --wood-edge: #2e1c10;
+      --felt: #1d6b45; --felt-deep: #114a2e; --felt-line: #2a8557;
+      --gold: #d8b25c; --ivory: #f3efe4; --ink: #191512;
+      --chip-red: #b03a30; --chip-blue: #33567f; --chip-green: #2e7d52;
+      --ok: #6fd096; --bad: #e07b6d;
+      font-family: "Avenir Next", Avenir, "Helvetica Neue", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; color: var(--ivory); min-height: 100vh;
+      background:
+        radial-gradient(120% 90% at 50% -10%, var(--wall-hi), var(--wall-lo) 70%);
+      overflow-x: hidden;
+    }
+    /* wainscot panelling on the back wall */
+    .room::before {
+      content: ""; position: fixed; inset: auto 0 0 0; height: 34vh; z-index: -1;
+      background:
+        linear-gradient(#00000000, #00000055),
+        repeating-linear-gradient(90deg, #241a14 0 5.5rem, #2b201a 5.5rem 5.65rem);
+      border-top: 3px solid #3a2b20;
+    }
+    header {
+      display: flex; align-items: baseline; gap: 1rem;
+      padding: 1rem 1.4rem 0.4rem; max-width: 64rem; margin: 0 auto;
+    }
+    header h1 { font-size: 1.02rem; letter-spacing: .18em; text-transform: uppercase;
+                color: var(--gold); margin: 0; font-weight: 600; }
+    header .suits { color: var(--ivory); opacity: .5; letter-spacing: .3em; }
+    header a { margin-left: auto; color: var(--ivory); opacity: .65; font-size: .85rem;
+               text-decoration: none; border-bottom: 1px solid #ffffff44; }
+    header a:hover { opacity: 1; }
+
+    /* ---------- the scene ---------- */
+    .scene { position: relative; max-width: 64rem; margin: 0 auto; padding: 0 1rem;
+             height: clamp(24rem, 56vw, 33rem); }
+    /* hanging lamp + cone of light */
+    .lamp { position: absolute; left: 50%; top: -0.4rem; transform: translateX(-50%);
+            width: 11rem; height: 3.4rem; z-index: 3; }
+    .lamp::before { /* shade */
+      content: ""; position: absolute; left: 50%; transform: translateX(-50%);
+      top: 1.2rem; width: 9rem; height: 2rem; border-radius: 0 0 4.5rem 4.5rem / 0 0 2rem 2rem;
+      background: linear-gradient(#0e3a26, #16543a); box-shadow: inset 0 -0.5rem 1rem #0006;
+    }
+    .lamp::after { /* cord */
+      content: ""; position: absolute; left: 50%; top: -1.2rem; width: 2px; height: 2.5rem;
+      background: #000a; transform: translateX(-50%);
+    }
+    .lightcone { position: absolute; left: 50%; top: 3.2rem; transform: translateX(-50%);
+      width: 46rem; max-width: 92%; height: 78%; z-index: 0; pointer-events: none;
+      background: radial-gradient(50% 60% at 50% 20%, #ffe9b01c, #ffe9b008 55%, transparent 72%);
+      clip-path: polygon(38% 0, 62% 0, 100% 100%, 0 100%); }
+
+    /* the dealer, standing behind the far rail */
+    .dealer { position: absolute; left: 50%; top: 10%; transform: translateX(-50%);
+              width: 7.5rem; height: 6rem; z-index: 1; opacity: .92; }
+    .dealer .torso { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 6.6rem; height: 3.6rem; border-radius: 3rem 3rem 0 0;
+      background: linear-gradient(#23201e, #131110); } /* vest */
+    .dealer .shirt { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 1.8rem; height: 2.9rem; clip-path: polygon(50% 100%, 0 0, 100% 0);
+      background: #e8e2d2; }
+    .dealer .head { position: absolute; bottom: 3.2rem; left: 50%; transform: translateX(-50%);
+      width: 2.1rem; height: 2.4rem; border-radius: 50% 50% 45% 45%;
+      background: linear-gradient(#8a6b52, #6d5240); }
+    .dealer .tie { position: absolute; bottom: 2.55rem; left: 50%; transform: translateX(-50%);
+      width: 1.15rem; height: .5rem; background: #1a1a1a; border-radius: .1rem;
+      clip-path: polygon(0 0, 50% 40%, 100% 0, 100% 100%, 50% 60%, 0 100%); }
+
+    /* ---------- the table ---------- */
+    .table-rail {
+      position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+      width: min(58rem, 94%); height: 76%;
+      border-radius: 50% / 46%;
+      background: linear-gradient(160deg, var(--wood-hi), var(--wood) 45%, var(--wood-edge));
+      box-shadow: 0 1.6rem 3rem #000b, inset 0 .3rem .6rem #ffffff2a, inset 0 -0.6rem 1.2rem #0008;
+      z-index: 2;
+    }
+    .felt {
+      position: absolute; inset: 4.5% 3.2%;
+      border-radius: 50% / 46%;
+      background:
+        radial-gradient(75% 70% at 50% 34%, #ffffff10, transparent 60%),
+        radial-gradient(100% 100% at 50% 50%, var(--felt), var(--felt-deep) 85%);
+      box-shadow: inset 0 .8rem 2.2rem #0007, inset 0 0 0 3px #0d3a25;
+    }
+    .felt::before { /* betting line */
+      content: ""; position: absolute; inset: 17% 15%;
+      border: 2px solid var(--felt-line); border-radius: 50% / 46%; opacity: .5;
+    }
+    .felt::after { /* house mark */
+      content: "♠ POKER LAB ♠"; position: absolute; left: 50%; top: 62%;
+      transform: translateX(-50%); letter-spacing: .4em; font-size: .68rem;
+      color: #ffffff2e; white-space: nowrap;
+    }
+
+    /* prize plaques + stacks strip */
+    .ladder { position: absolute; left: 50%; top: 13%; transform: translateX(-50%);
+      display: flex; gap: .4rem; z-index: 3; flex-wrap: wrap; justify-content: center;
+      max-width: 80%; }
+    .plaque { background: linear-gradient(#3a2f16, #241d0e); color: var(--gold);
+      border: 1px solid #8a6f35; border-radius: .3rem; font-size: .68rem;
+      padding: .18rem .55rem; letter-spacing: .04em; white-space: nowrap;
+      font-variant-numeric: tabular-nums; }
+    .plaque.left { color: var(--ivory); border-color: #ffffff3d; }
+    .stacksline { position: absolute; left: 50%; top: 26%; transform: translateX(-50%);
+      font-size: .7rem; color: #ffffffb0; letter-spacing: .05em; white-space: nowrap;
+      font-variant-numeric: tabular-nums; z-index: 3; }
+
+    /* pot */
+    .pot { position: absolute; left: 50%; top: 40%; transform: translateX(-50%);
+      text-align: center; z-index: 3; }
+    .chips { display: flex; gap: .28rem; justify-content: center; margin-bottom: .3rem; }
+    .chip { width: 1.5rem; height: 1.05rem; border-radius: 50%;
+      border: 2px dashed #ffffffc9; box-shadow: 0 3px 0 #0007, 0 4px 0 #ffffff22; }
+    .chip.c1 { background: var(--chip-red); } .chip.c2 { background: var(--chip-blue); }
+    .chip.c3 { background: var(--chip-green); }
+    .pot .amt { font-size: .82rem; color: var(--ivory); letter-spacing: .05em;
+      text-shadow: 0 1px 2px #000; font-variant-numeric: tabular-nums; }
+    .pot .ante { font-size: .68rem; color: #ffffff9d; }
+
+    /* seats */
+    .seat { position: absolute; transform: translate(-50%, -50%); z-index: 4;
+      display: flex; flex-direction: column; align-items: center; gap: .3rem; }
+    .seat .chairback { width: 4.6rem; height: 2.1rem; border-radius: 2.2rem 2.2rem .4rem .4rem;
+      background: linear-gradient(#4a2f1c, #33200f); box-shadow: inset 0 .25rem .4rem #ffffff21, 0 .4rem .8rem #0009;
+      margin-bottom: -1.1rem; }
+    .seat .plate { background: #10100fd9; border: 1px solid #ffffff2b; border-radius: 1rem;
+      padding: .22rem .8rem; font-size: .74rem; text-align: center; min-width: 4.6rem;
+      backdrop-filter: blur(2px); }
+    .seat .plate .pos { color: var(--gold); font-weight: 600; letter-spacing: .06em; }
+    .seat .plate .stack { color: #ffffffc4; font-variant-numeric: tabular-nums; }
+    .seat.hero .plate { border-color: var(--gold); box-shadow: 0 0 .9rem #d8b25c44; }
+    .seat .cardsback { display: flex; gap: .18rem; margin-top: .1rem; }
+    .miniback { width: 1.15rem; height: 1.6rem; border-radius: .18rem;
+      background: repeating-linear-gradient(45deg, #7d2f2a 0 3px, #6a2521 3px 6px);
+      border: 1.5px solid #e8e2d2; box-shadow: 0 2px 4px #0008; }
+    .dbtn { position: absolute; width: 1.55rem; height: 1.55rem; border-radius: 50%;
+      background: radial-gradient(#ffffff, #cfc9b8); color: var(--ink);
+      font-weight: 800; font-size: .8rem; display: flex; align-items: center;
+      justify-content: center; box-shadow: 0 3px 6px #000a; z-index: 5;
+      transform: translate(-50%, -50%); }
+
+    /* hero hole cards */
+    .holecards { position: absolute; left: 50%; top: 71%; transform: translateX(-50%);
+      display: flex; gap: .5rem; z-index: 5; }
+    .card { width: 3.6rem; height: 5rem; border-radius: .45rem; background: #fdfcf7;
+      color: var(--ink); box-shadow: 0 .5rem 1rem #000a, inset 0 0 0 1px #00000014;
+      position: relative; font-family: Georgia, serif; }
+    .card .corner { position: absolute; top: .3rem; left: .4rem; line-height: 1;
+      font-size: 1.05rem; font-weight: 700; text-align: center; }
+    .card .corner .s { font-size: .85rem; display: block; }
+    .card .pip { position: absolute; right: .4rem; bottom: .2rem; font-size: 2rem; }
+    .card.red { color: #b3261e; }
+    @media (prefers-reduced-motion: no-preference) {
+      .card { animation: deal .35s ease-out backwards; }
+      .card:nth-child(2) { animation-delay: .12s; }
+      @keyframes deal { from { transform: translateY(-2.2rem) rotate(-6deg); opacity: 0; } }
+    }
+
+    /* ---------- console ---------- */
+    .console { max-width: 44rem; margin: 0 auto; padding: .6rem 1.2rem 3rem;
+      text-align: center; }
+    #description { font-size: 1.12rem; font-weight: 600; margin: .4rem 0 .2rem;
+      color: var(--ivory); }
+    .chipsrow { display: flex; gap: .4rem; justify-content: center; margin: .3rem 0 .8rem; }
+    .infochip { font-size: .68rem; letter-spacing: .06em; border: 1px solid #ffffff33;
+      border-radius: 999px; padding: .16rem .6rem; color: #ffffffb8;
+      background: #ffffff0d; }
+    #actions { display: flex; gap: .8rem; justify-content: center; margin: .6rem 0 1rem; }
+    #actions button {
+      font: inherit; font-weight: 700; font-size: 1.02rem; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--ivory); cursor: pointer;
+      padding: .7rem 2.1rem; border-radius: 999px; border: 2px dashed #ffffff7d;
+      background: radial-gradient(120% 160% at 50% 0%, #ffffff2b, transparent 50%), var(--chip-blue);
+      box-shadow: 0 .35rem 0 #00000080, 0 .8rem 1.2rem #0008;
+    }
+    #actions button:active { transform: translateY(.2rem); box-shadow: 0 .15rem 0 #00000080; }
+    #actions button[data-action="jam"], #actions button[data-action="call"] {
+      background: radial-gradient(120% 160% at 50% 0%, #ffffff2b, transparent 50%), var(--chip-red); }
+    #actions button[data-action="fold"] {
+      background: radial-gradient(120% 160% at 50% 0%, #ffffff20, transparent 50%), #3a3a38; }
+    #actions button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+    #feedback { min-height: 3.4rem; font-size: .98rem; max-width: 40rem; margin: 0 auto;
+      line-height: 1.45; }
+    #feedback.correct { color: var(--ok); }
+    #feedback.incorrect { color: var(--bad); }
+    #next { font: inherit; font-size: .88rem; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--gold); background: transparent; border: 1.5px solid var(--gold);
+      border-radius: 999px; padding: .5rem 1.6rem; cursor: pointer; margin-top: .6rem; }
+    #next:hover { background: #d8b25c22; }
+    #next:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+    @media (max-width: 40rem) {
+      .scene { height: 24rem; }
+      .card { width: 2.9rem; height: 4rem; }
+      .dealer { display: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>Push/Fold Trainer</h1>
-  <p id="description">Loading…</p>
-  <p id="meta"></p>
-  <p id="tournament"></p>
-  <div id="actions"></div>
-  <p id="feedback"></p>
-  <button id="next">Next spot →</button>
+  <div class="room">
+    <header>
+      <h1>Poker Lab</h1>
+      <span class="suits">♠ ♥ ♣ ♦</span>
+      <a href="/report">leak report →</a>
+    </header>
+
+    <div class="scene">
+      <div class="lightcone"></div>
+      <div class="lamp"></div>
+      <div class="dealer" aria-hidden="true">
+        <div class="torso"></div><div class="shirt"></div>
+        <div class="head"></div><div class="tie"></div>
+      </div>
+      <div class="table-rail">
+        <div class="felt">
+          <div class="ladder" id="ladder"></div>
+          <div class="stacksline" id="stacksline"></div>
+          <div class="pot" id="pot"></div>
+          <div id="seats"></div>
+          <div class="holecards" id="holecards"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="console">
+      <p id="description">Loading…</p>
+      <div class="chipsrow" id="meta"></div>
+      <div id="actions"></div>
+      <p id="feedback"></p>
+      <button id="next">Deal next spot</button>
+    </div>
+  </div>
   <script src="/static/app.js"></script>
 </body>
 </html>
