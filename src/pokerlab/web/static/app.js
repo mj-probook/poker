@@ -132,7 +132,7 @@ function seatXY(i, n) {
   return [50 + 43 * Math.cos(angle), 50 + 38 * Math.sin(angle)];
 }
 
-function seatEl(x, y, { hero, pos, stack, cards }) {
+function seatEl(x, y, { hero, pos, stack, cards, allin }) {
   const seat = document.createElement("div");
   seat.className = "seat" + (hero ? " hero" : "");
   seat.style.left = `${x}%`;
@@ -140,11 +140,16 @@ function seatEl(x, y, { hero, pos, stack, cards }) {
   let html = `<div class="chairback"></div><div class="plate">`;
   if (pos) html += `<span class="pos">${pos}</span> `;
   if (stack != null) html += `<span class="stack">${stack}bb</span>`;
+  // all-in replaces the stack number: those chips are in the middle now, and
+  // a plate still reading "10bb" would state a stack the player no longer has
+  if (allin) html += `<span class="allin">ALL-IN</span>`;
   html += `</div>`;
   if (cards) html += `<div class="cardsback"><div class="miniback"></div><div class="miniback"></div></div>`;
   seat.innerHTML = html;
   return seat;
 }
+
+let heroSeatEl = null; // to-act pulse lives on the hero seat until answered
 
 function render(spot) {
   document.getElementById("description").textContent = spot.description;
@@ -195,6 +200,10 @@ function render(spot) {
     `<div class="chip c3"></div></div>` +
     `<div class="amt">pot ${spot.pot_bb}bb</div>` + anteLine;
 
+  // the prior action, drawn on the felt in the server's words — the scene
+  // never derives its own account of what happened before hero's decision
+  document.getElementById("actionline").textContent = spot.action_line || "";
+
   // seats: hero bottom with position + depth; villains anonymous card-backs.
   const seatsBox = document.getElementById("seats");
   seatsBox.innerHTML = "";
@@ -203,19 +212,37 @@ function render(spot) {
   for (let i = 0; i < n; i++) {
     const [x, y] = seatXY(i, n);
     if (i === 0) {
-      seatsBox.appendChild(seatEl(x, y, {
+      heroSeatEl = seatEl(x, y, {
         hero: true, pos: spot.position, stack: spot.depth_bb, cards: false,
-      }));
+      });
+      heroSeatEl.className += " toact"; // pulses until the answer lands
+      seatsBox.appendChild(heroSeatEl);
     } else {
       // HU effective stacks are shared, so the villain's depth is the hero's;
-      // multiway seat/stack attribution is unknown -> cards only, no number.
+      // multiway seat/stack attribution is unknown -> cards only, no number
+      // (the action line carries the jam there instead of a seat badge).
       const villain = { hero: false, cards: true };
       if (n === 2) {
         villain.pos = heroIsSB ? "BB" : "SB";
-        villain.stack = spot.depth_bb;
+        if (spot.facing_allin) villain.allin = true;
+        else villain.stack = spot.depth_bb;
       }
       seatsBox.appendChild(seatEl(x, y, villain));
     }
+  }
+
+  // the jam itself: villain's chips pushed toward the pot (HU only — the
+  // jammer's seat is a rules fact there, the lone villain is the SB)
+  if (n === 2 && spot.facing_allin) {
+    const jc = document.createElement("div");
+    jc.className = "jamchips";
+    jc.innerHTML =
+      `<div class="chip c1"></div><div class="chip c2"></div>` +
+      `<div class="chip c3"></div>`;
+    const [vx, vy] = seatXY(1, 2);
+    jc.style.left = `${vx}%`;
+    jc.style.top = `${vy + 13}%`;
+    seatsBox.appendChild(jc);
   }
 
   // dealer button: drawn only where it is a rules fact — heads-up, SB = BTN.
@@ -270,6 +297,7 @@ async function submitAnswer(action) {
   const fb = document.getElementById("feedback");
   fb.textContent = (score.correct ? "✅ " : "❌ ") + score.explanation;
   fb.className = score.correct ? "correct" : "incorrect";
+  if (heroSeatEl) heroSeatEl.className = "seat hero"; // action complete
   lastAnswer = score;
   renderRta();
 }

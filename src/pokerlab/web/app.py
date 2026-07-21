@@ -154,6 +154,17 @@ def _spot_json(drill: gen.Drill) -> dict:
         "depth_bb": drill.depth_bb,
         "hand": drill.hand_label,
         "description": drill.description,
+        # The PRIOR ACTION as on-table facts (user report: the jam lived only
+        # in the prompt sentence under the felt, so the scene showed a
+        # decision with no action). Server-authored — the page draws these
+        # words and never derives its own account of what happened. The line
+        # deliberately does NOT enumerate the hero's options: the button row
+        # contains distractors, and "jam or fold" would identify the real
+        # pair. BB drills face an SB open-jam by construction (generator).
+        "action_line": (
+            f"SB is all-in for {drill.depth_bb:g}bb — action on you"
+            if drill.position == "BB" else "Action on you"),
+        "facing_allin": drill.position == "BB",
         "legal_actions": list(drill.legal_actions),
         # Submittable DISTRACTORS outside the solved game (generator.Drill):
         # rendered as buttons, graded as framework deviations with no EV

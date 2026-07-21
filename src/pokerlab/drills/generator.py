@@ -89,8 +89,13 @@ def _describe(pos: str, depth: float, hand: str, kind: str,
     # 0.125bb/player, 25 at 0.25 — round-3 finding [E49]), so a prompt that
     # omitted it would ask the user to guess which chart is being tested.
     ante = f", {ante_bb:g}bb ante" if ante_bb else ""
+    # The SB prompt must NOT enumerate the priced pair ("open-jam or fold?"):
+    # the button row now carries off-tree distractors, and a prompt naming the
+    # real options would identify them. The BB prompt keeps "call or fold?" —
+    # facing an all-in that pair is poker-complete, which is also why BB spots
+    # carry no distractors.
     if pos == "SB":
-        base = f"SB {d}bb{ante}, {hand}: open-jam or fold?"
+        base = f"SB {d}bb{ante}, {hand}: your action?"
     else:
         base = f"BB {d}bb{ante} facing an SB all-in, {hand}: call or fold?"
     if kind == "icm" and tc is not None:
