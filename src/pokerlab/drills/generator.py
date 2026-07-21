@@ -23,7 +23,9 @@ import numpy as np
 from pokerlab.charts import hands, jamfold_range
 from pokerlab.charts.equity import load_equity_matrix
 from pokerlab.charts.jamfold import icm_model, joint_prior, solve_jamfold_icm
-from pokerlab.drills.categories import ANTES, jamfold_category
+from pokerlab.charts.ring import (RING_JAMMERS, RING_ORDER,
+                                  ring_defense_range, ring_range)
+from pokerlab.drills.categories import ANTES, jamfold_category, ring_category
 from pokerlab.types import Solution, TournamentContext
 
 DEPTHS: tuple[int, ...] = (5, 8, 10, 15, 20)
@@ -65,14 +67,22 @@ class Drill:
     # DISTRACTOR actions: submittable but outside the solved game, so they
     # grade as framework deviations with ev_loss None — the chart never
     # priced them, and pretending it did (any number, including 0) would be
-    # the fabricated-claim class this project bans. SB open spots carry
-    # limp/raise distractors; BB spots facing an all-in carry NONE, because
+    # the fabricated-claim class this project bans. First-in spots carry
+    # limp/raise distractors; spots facing an all-in carry NONE, because
     # poker itself allows only call or fold there — a false button would be
     # a rendered false fact, not a pedagogical trick.
     off_tree_actions: tuple[str, ...] = ()
     # Server-authored sentence for the page when the action set is complete
     # at two (the page renders server words, never its own claims).
     action_note: str = ""
+    # The position whose all-in the hero is facing ("" when hero is first to
+    # act). A formation fact the scene renders — "SB is all-in for 10bb" —
+    # and the RTA framing depends on.
+    versus: str = ""
+    # Seat list in action order when seat attribution is a formation fact
+    # (HU + 9-max ring). Empty for ICM multiway, whose payload deliberately
+    # does not attribute stacks to seats.
+    table: tuple[str, ...] = ()
 
 
 # SB open distractors: plausible at the table, unpriced by the jam/fold chart.
@@ -89,8 +99,13 @@ def _describe(pos: str, depth: float, hand: str, kind: str,
     # 0.125bb/player, 25 at 0.25 — round-3 finding [E49]), so a prompt that
     # omitted it would ask the user to guess which chart is being tested.
     ante = f", {ante_bb:g}bb ante" if ante_bb else ""
+    # The SB prompt must NOT enumerate the priced pair ("open-jam or fold?"):
+    # the button row now carries off-tree distractors, and a prompt naming the
+    # real options would identify them. The BB prompt keeps "call or fold?" —
+    # facing an all-in that pair is poker-complete, which is also why BB spots
+    # carry no distractors.
     if pos == "SB":
-        base = f"SB {d}bb{ante}, {hand}: open-jam or fold?"
+        base = f"SB {d}bb{ante}, {hand}: your action?"
     else:
         base = f"BB {d}bb{ante} facing an SB all-in, {hand}: call or fold?"
     if kind == "icm" and tc is not None:
@@ -124,7 +139,55 @@ def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
                         description=_describe(pos, d, hand, "jamfold", None, ante),
                         off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
                         action_note="" if pos == "SB" else _BB_NOTE,
+                        versus="" if pos == "SB" else "SB",
+                        table=("SB", "BB"),
                     ))
+    return out
+
+
+def ring_drills() -> list[Drill]:
+    """9-max first-in jam drills for every non-blind position, plus a defend
+    drill for every (responder, jammer) pair — all from the certified ring
+    chain charts (charts/ring.py; the model's three restrictions ride in each
+    Solution's range_ctx)."""
+    out: list[Drill] = []
+    for jammer in RING_JAMMERS:
+        behind = RING_ORDER[RING_ORDER.index(jammer) + 1:]
+        for d in DEPTHS:
+            for ante in ANTES:
+                a = f", {ante:g}bb ante" if ante else ""
+                pot = 2.0 * float(d)
+                rng = ring_range(jammer, float(d), ante)
+                leak = ring_category(jammer, float(d), ante_bb=ante)
+                for hand in hands.HAND_CLASSES:
+                    out.append(Drill(
+                        drill_id=f"{leak}:{hand}", kind="ring",
+                        position=jammer, depth_bb=float(d), hand_label=hand,
+                        solution=rng[hand], pot_bb=pot, leak_key=leak,
+                        legal_actions=("jam", "fold"),
+                        description=(f"{jammer} {int(d)}bb{a}, 9-max "
+                                     f"first-in, {hand}: your action?"),
+                        off_tree_actions=_OFF_TREE_SB,
+                        versus="", table=RING_ORDER,
+                    ))
+                for resp in behind:
+                    rngd = ring_defense_range(resp, versus=jammer,
+                                              depth_bb=float(d), ante=ante)
+                    leakd = ring_category(resp, float(d), versus=jammer,
+                                          ante_bb=ante)
+                    for hand in hands.HAND_CLASSES:
+                        out.append(Drill(
+                            drill_id=f"{leakd}:{hand}", kind="ring",
+                            position=resp, depth_bb=float(d),
+                            hand_label=hand, solution=rngd[hand],
+                            pot_bb=pot, leak_key=leakd,
+                            legal_actions=("call", "fold"),
+                            description=(f"{resp} {int(d)}bb{a} facing a "
+                                         f"{jammer} all-in (9-max), {hand}: "
+                                         f"call or fold?"),
+                            action_note=_BB_NOTE,
+                            versus=jammer, table=RING_ORDER,
+                        ))
     return out
 
 
@@ -208,13 +271,20 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
                 tournament=tournament, bb_value=bb_value,
                 off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
                 action_note="" if pos == "SB" else _BB_NOTE,
+                versus="" if pos == "SB" else "SB",
+                # table deliberately stays empty: the ICM payload does not
+                # attribute stacks to seats, so the scene keeps them anonymous
             ))
     return out
 
 
 def default_population() -> list[Drill]:
-    """The full drill population served by the web app: jam/fold + ICM bubble."""
-    return jamfold_drills() + icm_drills()
+    """The full drill population served by the web app: HU jam/fold + ICM
+    bubble + 9-max ring. One function on purpose — the app-wide honesty pins
+    (every kind has an EV unit, every source a verb, the scheduler budget
+    counts every category) sweep THIS list, so a population source that
+    lived outside it would silently escape them."""
+    return jamfold_drills() + icm_drills() + ring_drills()
 
 
 def sample_drills(drills: list[Drill], n: int, seed: int) -> list[Drill]:

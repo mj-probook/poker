@@ -88,6 +88,7 @@ UNIDENTIFIED_HAND = "unidentified"
 EV_UNITS: dict[str, str] = {
     "jamfold": "bb",
     "icm": "ICM-$",
+    "ring": "bb",
 }
 
 # WHICH ORACLE decided the best action, in the feedback line's own words
@@ -135,6 +136,44 @@ class Answer(BaseModel):
     action: str
 
 
+def _seats_json(drill: gen.Drill) -> list[dict] | None:
+    """Every seat's state, in action order — a formation FACT, not layout.
+
+    Only for drills whose seat attribution is a rules fact (`drill.table`
+    non-empty: HU + 9-max ring). Everyone before the hero folded (that is
+    what first-in / facing-a-jam means), except the seat that jammed; seats
+    after the hero have not acted. ICM multiway returns None — its payload
+    does not attribute stacks to seats, and a seats array would fabricate
+    exactly that attribution.
+    """
+    if not drill.table:
+        return None
+    hero_i = drill.table.index(drill.position)
+    jam_i = drill.table.index(drill.versus) if drill.versus else hero_i
+    out = []
+    for i, pos in enumerate(drill.table):
+        if i == hero_i:
+            state = "hero"
+        elif drill.versus and i == jam_i:
+            state = "all-in"
+        elif i < hero_i:
+            state = "folded"
+        else:
+            state = "live"
+        out.append({"pos": pos, "state": state})
+    return out
+
+
+def _action_line(drill: gen.Drill) -> str:
+    """The prior action in the server's words. Never enumerates the hero's
+    options (the button row contains distractors)."""
+    if drill.versus:
+        return f"{drill.versus} is all-in for {drill.depth_bb:g}bb — action on you"
+    if drill.table and drill.position != drill.table[0]:
+        return "Folded to you — action on you"
+    return "Action on you"
+
+
 def _spot_json(drill: gen.Drill) -> dict:
     tc = drill.tournament
     return {
@@ -154,6 +193,15 @@ def _spot_json(drill: gen.Drill) -> dict:
         "depth_bb": drill.depth_bb,
         "hand": drill.hand_label,
         "description": drill.description,
+        # The PRIOR ACTION as on-table facts (user report: the jam lived only
+        # in the prompt sentence under the felt, so the scene showed a
+        # decision with no action). Server-authored — the page draws these
+        # words and never derives its own account of what happened.
+        "action_line": _action_line(drill),
+        "facing_allin": bool(drill.versus),
+        # Per-seat states in action order where attribution is a rules fact,
+        # None where it is not (ICM) — see _seats_json.
+        "seats": _seats_json(drill),
         "legal_actions": list(drill.legal_actions),
         # Submittable DISTRACTORS outside the solved game (generator.Drill):
         # rendered as buttons, graded as framework deviations with no EV

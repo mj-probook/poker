@@ -114,18 +114,35 @@ def test_index_and_static_served(client):
 def test_long_correct_streak_never_500s_and_covers_the_population(client):
     from pokerlab.drills import generator as gen
 
-    all_cats = {d.leak_key for d in gen.default_population()}
+    population = gen.default_population()
+    all_cats = {d.leak_key for d in population}
+    # The action the drill's own solution prices highest — answering it is
+    # always graded correct (ev_loss 0). The walk used to answer
+    # legal_actions[0], which at a 137-category vocabulary happened to be
+    # right often enough to converge; at 735 the wrong answers legitimately
+    # re-prioritize those lapsed categories ahead of unseen ones (worst-leak
+    #-first IS the scheduler's product behavior), so the "correct streak"
+    # this test is named for has to be literal, not approximate.
+    best_of = {d.drill_id: max(d.solution.actions,
+                               key=lambda a: d.solution.actions[a][0])
+               for d in population}
     seen: set[str] = set()
 
-    for _ in range(300):
+    # Walk budget DERIVED from the vocabulary — the same [E49] lesson the ICM
+    # test above already applies: a hardcoded 300 went quietly stale when the
+    # ring charts grew the vocabulary to 735. Every correctly answered
+    # category is due tomorrow, so the walk advances the scheduler's `unseen`
+    # rung one new category per iteration: |cats| covers the population, +40
+    # keeps a re-serve tail exercising the repeat-answer path from [E42].
+    for _ in range(len(all_cats) + 40):
         spot = client.get("/api/drill/next")
         assert spot.status_code == 200, spot.text
         spot = spot.json()
         drill_id = spot["drill_id"]
         seen.add(drill_id.rsplit(":", 1)[0])
-        # always answer correctly -- the trajectory that used to overflow
         best = client.post("/api/drill/answer",
-                           json={"drill_id": drill_id, "action": spot["legal_actions"][0]})
+                           json={"drill_id": drill_id,
+                                 "action": best_of[drill_id]})
         assert best.status_code == 200, f"500 on iteration: {best.text}"
 
     assert seen == all_cats, f"unreachable categories: {sorted(all_cats - seen)}"

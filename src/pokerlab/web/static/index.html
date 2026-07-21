@@ -126,6 +126,13 @@
       font-size: .7rem; color: #ffffffb0; letter-spacing: .05em; white-space: nowrap;
       font-variant-numeric: tabular-nums; z-index: 3; }
 
+    /* the prior action, drawn on the felt in the server's words */
+    .actionline { position: absolute; left: 50%; top: 32%; transform: translateX(-50%);
+      z-index: 3; font-size: .76rem; letter-spacing: .07em; color: #ffe9b0;
+      background: #00000055; border: 1px solid #ffe9b03a; border-radius: 999px;
+      padding: .2rem .85rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .actionline:empty { display: none; }
+
     /* pot */
     .pot { position: absolute; left: 50%; top: 40%; transform: translateX(-50%);
       text-align: center; z-index: 3; }
@@ -149,7 +156,27 @@
       backdrop-filter: blur(2px); }
     .seat .plate .pos { color: var(--gold); font-weight: 600; letter-spacing: .06em; }
     .seat .plate .stack { color: #ffffffc4; font-variant-numeric: tabular-nums; }
+    /* an all-in villain's chips are in the middle, not behind — the plate
+       states the state instead of a stack number */
+    .seat .plate .allin { color: #ff9d8a; font-weight: 800; font-size: .68rem;
+      letter-spacing: .09em; }
+    .seat.folded { opacity: .45; }
+    .seat.folded .plate { border-color: #ffffff17; }
+    .seat .plate .foldtag { font-size: .62rem; color: #ffffff73;
+      letter-spacing: .08em; font-style: italic; }
     .seat.hero .plate { border-color: var(--gold); box-shadow: 0 0 .9rem #d8b25c44; }
+    @media (prefers-reduced-motion: no-preference) {
+      .seat.hero.toact .plate { animation: toact 1.6s ease-in-out infinite; }
+      @keyframes toact {
+        0%, 100% { box-shadow: 0 0 .9rem #d8b25c44; }
+        50% { box-shadow: 0 0 1.5rem #d8b25cb0; }
+      }
+    }
+    /* the jam, pushed toward the pot (HU only — seat attribution is a rules
+       fact there; multiway seats stay anonymous, the action line carries it) */
+    .jamchips { position: absolute; transform: translate(-50%, -50%); z-index: 3;
+      display: flex; gap: .22rem; }
+    .jamchips .chip { width: 1.2rem; height: .85rem; }
     .seat .cardsback { display: flex; gap: .18rem; margin-top: .1rem; }
     .miniback { width: 1.15rem; height: 1.6rem; border-radius: .18rem;
       background: repeating-linear-gradient(45deg, #7d2f2a 0 3px, #6a2521 3px 6px);
@@ -266,6 +293,7 @@
         <div class="felt">
           <div class="ladder" id="ladder"></div>
           <div class="stacksline" id="stacksline"></div>
+          <div class="actionline" id="actionline"></div>
           <div class="pot" id="pot"></div>
           <div id="seats"></div>
           <div class="holecards" id="holecards"></div>
