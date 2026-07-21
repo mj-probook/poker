@@ -15,6 +15,60 @@ const API_NEXT = "/api/drill/next";
 const API_ANSWER = "/api/drill/answer";
 
 let current = null;
+let lastAnswer = null; // the full answer payload; renderRta reads its .rta
+
+// Poker order for the button row, not payload order: fold cheapest ->
+// all-in. Off-tree distractors interleave with the priced actions and are
+// styled identically — a visual tell would give the answer away. Unknown
+// labels sort last rather than first.
+const ACTION_ORDER = ["fold", "limp", "call", "raise 2.2bb", "raise 3bb", "jam"];
+const orderKey = (a) => {
+  const i = ACTION_ORDER.indexOf(a);
+  return i === -1 ? ACTION_ORDER.length : i;
+};
+
+// RTA toggle: a display preference persisted per-browser. The panel data
+// rides on every answer regardless — the toggle only decides visibility.
+let rtaOn = localStorage.getItem("rta") === "on";
+const rtaBtn = document.getElementById("rta-toggle");
+rtaBtn.setAttribute("aria-pressed", String(rtaOn));
+rtaBtn.addEventListener("click", () => {
+  rtaOn = !rtaOn;
+  localStorage.setItem("rta", rtaOn ? "on" : "off");
+  rtaBtn.setAttribute("aria-pressed", String(rtaOn));
+  renderRta(); // reflect immediately on the answer already on screen
+});
+
+// The solver readout, from SERVER numbers only: per-action EV + frequency
+// from the Solution, the decision-ε actually used, and a server-authored
+// reasoning sentence. The page adds structural labels, never claims.
+function renderRta() {
+  const panel = document.getElementById("rta");
+  if (!rtaOn || !lastAnswer || !lastAnswer.rta) {
+    panel.hidden = true;
+    return;
+  }
+  const r = lastAnswer.rta;
+  const unit = lastAnswer.ev_unit;
+  const rows = r.actions
+    .slice()
+    .sort((a, b) => b.ev - a.ev)
+    .map(
+      (a) =>
+        `<tr class="${a.action === r.best_action ? "best-row" : ""}">` +
+        `<td>${a.action}</td><td class="num">${a.ev.toFixed(2)}</td>` +
+        `<td class="num">${(a.frequency * 100).toFixed(0)}%</td></tr>`
+    )
+    .join("");
+  panel.innerHTML =
+    `<h2>RTA · solver readout</h2>` +
+    `<p class="best">best: <strong>${r.best_action}</strong></p>` +
+    `<table><tr><th>action</th><th class="num">EV (${unit})</th>` +
+    `<th class="num">freq</th></tr>${rows}</table>` +
+    `<p class="eps">ε = ${r.epsilon.toFixed(2)} ${unit}</p>` +
+    `<p class="why">${r.reasoning}</p>`;
+  panel.hidden = false;
+}
 
 // A failed request used to fall straight through into the happy path, so the
 // UI rendered "undefined" instead of saying what went wrong. Surface the
@@ -180,18 +234,26 @@ function render(spot) {
   hole.innerHTML = "";
   heroCards(spot.hand).forEach((c) => hole.appendChild(cardEl(c)));
 
-  // actions
+  // actions: priced + off-tree distractor buttons, one indistinguishable row
+  // in poker order. Distractors are the server's (spot.off_tree_actions) —
+  // the page never invents a button, so BB-facing-a-jam stays call/fold.
   const box = document.getElementById("actions");
   box.innerHTML = "";
-  spot.legal_actions.forEach((action) => {
+  const all = spot.legal_actions.concat(spot.off_tree_actions || []);
+  all.sort((a, b) => orderKey(a) - orderKey(b));
+  all.forEach((action) => {
     const btn = document.createElement("button");
     btn.textContent = action;
     btn.dataset.action = action;
     btn.addEventListener("click", () => submitAnswer(action));
     box.appendChild(btn);
   });
+  // why the action set is complete at two, in the server's words ("" hides it)
+  document.getElementById("action-note").textContent = spot.action_note || "";
   document.getElementById("feedback").textContent = "";
   document.getElementById("feedback").className = "";
+  lastAnswer = null;
+  renderRta();
 }
 
 async function submitAnswer(action) {
@@ -208,6 +270,8 @@ async function submitAnswer(action) {
   const fb = document.getElementById("feedback");
   fb.textContent = (score.correct ? "✅ " : "❌ ") + score.explanation;
   fb.className = score.correct ? "correct" : "incorrect";
+  lastAnswer = score;
+  renderRta();
 }
 
 document.getElementById("next").addEventListener("click", loadNext);

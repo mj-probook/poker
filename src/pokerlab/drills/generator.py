@@ -62,6 +62,23 @@ class Drill:
     # bb; the average chip's dollar value for ICM drills, whose EVs are
     # $-deltas. Carried on the Drill so the scoring call site cannot forget it.
     bb_value: float = 1.0
+    # DISTRACTOR actions: submittable but outside the solved game, so they
+    # grade as framework deviations with ev_loss None — the chart never
+    # priced them, and pretending it did (any number, including 0) would be
+    # the fabricated-claim class this project bans. SB open spots carry
+    # limp/raise distractors; BB spots facing an all-in carry NONE, because
+    # poker itself allows only call or fold there — a false button would be
+    # a rendered false fact, not a pedagogical trick.
+    off_tree_actions: tuple[str, ...] = ()
+    # Server-authored sentence for the page when the action set is complete
+    # at two (the page renders server words, never its own claims).
+    action_note: str = ""
+
+
+# SB open distractors: plausible at the table, unpriced by the jam/fold chart.
+_OFF_TREE_SB = ("limp", "raise 2.2bb", "raise 3bb")
+_BB_NOTE = ("Facing an all-in, raise does not exist: the only actions are "
+            "call and fold.")
 
 
 def _describe(pos: str, depth: float, hand: str, kind: str,
@@ -105,6 +122,8 @@ def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
                         solution=rng[hand], pot_bb=pot, leak_key=leak_key,
                         legal_actions=_ACTIONS[pos],
                         description=_describe(pos, d, hand, "jamfold", None, ante),
+                        off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
+                        action_note="" if pos == "SB" else _BB_NOTE,
                     ))
     return out
 
@@ -187,6 +206,8 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
                 pot_bb=pot, leak_key=leak_key, legal_actions=_ACTIONS[pos],
                 description=_describe(pos, depth, hand, "icm", tournament, icm_ante),
                 tournament=tournament, bb_value=bb_value,
+                off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
+                action_note="" if pos == "SB" else _BB_NOTE,
             ))
     return out
 

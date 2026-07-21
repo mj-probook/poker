@@ -37,9 +37,18 @@
     header h1 { font-size: 1.02rem; letter-spacing: .18em; text-transform: uppercase;
                 color: var(--gold); margin: 0; font-weight: 600; }
     header .suits { color: var(--ivory); opacity: .5; letter-spacing: .3em; }
-    header a { margin-left: auto; color: var(--ivory); opacity: .65; font-size: .85rem;
+    header a { color: var(--ivory); opacity: .65; font-size: .85rem;
                text-decoration: none; border-bottom: 1px solid #ffffff44; }
     header a:hover { opacity: 1; }
+    /* RTA toggle: a persistent display preference — it only decides whether
+       the solver readout (which rides on every answer) is SHOWN. */
+    #rta-toggle { margin-left: auto; font: inherit; font-size: .72rem;
+      letter-spacing: .12em; text-transform: uppercase; color: var(--ivory);
+      background: transparent; border: 1.5px solid #ffffff55;
+      border-radius: 999px; padding: .28rem .9rem; cursor: pointer; opacity: .75; }
+    #rta-toggle[aria-pressed="true"] { color: var(--gold);
+      border-color: var(--gold); background: #d8b25c1a; opacity: 1; }
+    #rta-toggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 
     /* ---------- the scene ---------- */
     .scene { position: relative; max-width: 64rem; margin: 0 auto; padding: 0 1rem;
@@ -151,6 +160,30 @@
       justify-content: center; box-shadow: 0 3px 6px #000a; z-index: 5;
       transform: translate(-50%, -50%); }
 
+    /* ---------- RTA readout (over the felt) ---------- */
+    .rta { position: absolute; right: 1.1rem; top: 7%; z-index: 6;
+      width: 16.5rem; text-align: left; padding: .8rem .95rem;
+      background: #0d0b09ee; border: 1px solid #d8b25c66; border-radius: .6rem;
+      box-shadow: 0 .8rem 1.6rem #000b; backdrop-filter: blur(3px); }
+    .rta h2 { margin: 0 0 .4rem; font-size: .66rem; letter-spacing: .16em;
+      text-transform: uppercase; color: var(--gold); font-weight: 600; }
+    .rta .best { font-size: .9rem; margin: 0 0 .5rem; }
+    .rta .best strong { color: var(--ok); text-transform: uppercase;
+      letter-spacing: .05em; }
+    .rta table { width: 100%; border-collapse: collapse; font-size: .74rem;
+      font-variant-numeric: tabular-nums; }
+    .rta th { text-align: left; font-weight: 600; color: #ffffff8c;
+      font-size: .62rem; text-transform: uppercase; letter-spacing: .08em;
+      padding: 0 0 .2rem; }
+    .rta th.num, .rta td.num { text-align: right; }
+    .rta td { padding: .18rem 0; border-top: 1px solid #ffffff1a;
+      color: var(--ivory); }
+    .rta tr.best-row td { color: var(--ok); }
+    .rta .eps { margin: .45rem 0 0; font-size: .68rem; color: #ffffff9d;
+      font-variant-numeric: tabular-nums; }
+    .rta .why { margin: .4rem 0 0; font-size: .74rem; line-height: 1.45;
+      color: #ffffffd6; }
+
     /* hero hole cards */
     .holecards { position: absolute; left: 50%; top: 71%; transform: translateX(-50%);
       display: flex; gap: .5rem; z-index: 5; }
@@ -177,7 +210,8 @@
     .infochip { font-size: .68rem; letter-spacing: .06em; border: 1px solid #ffffff33;
       border-radius: 999px; padding: .16rem .6rem; color: #ffffffb8;
       background: #ffffff0d; }
-    #actions { display: flex; gap: .8rem; justify-content: center; margin: .6rem 0 1rem; }
+    #actions { display: flex; flex-wrap: wrap; gap: .8rem; justify-content: center;
+      margin: .6rem 0 1rem; }
     #actions button {
       font: inherit; font-weight: 700; font-size: 1.02rem; letter-spacing: .04em;
       text-transform: uppercase; color: var(--ivory); cursor: pointer;
@@ -191,6 +225,8 @@
     #actions button[data-action="fold"] {
       background: radial-gradient(120% 160% at 50% 0%, #ffffff20, transparent 50%), #3a3a38; }
     #actions button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+    #action-note { font-size: .78rem; color: #ffffff96; font-style: italic;
+      margin: -0.2rem 0 .8rem; min-height: 1rem; }
     #feedback { min-height: 3.4rem; font-size: .98rem; max-width: 40rem; margin: 0 auto;
       line-height: 1.45; }
     #feedback.correct { color: var(--ok); }
@@ -205,6 +241,7 @@
       .scene { height: 24rem; }
       .card { width: 2.9rem; height: 4rem; }
       .dealer { display: none; }
+      .rta { right: .4rem; left: .4rem; width: auto; top: 3%; }
     }
   </style>
 </head>
@@ -213,6 +250,8 @@
     <header>
       <h1>Poker Lab</h1>
       <span class="suits">♠ ♥ ♣ ♦</span>
+      <button id="rta-toggle" aria-pressed="false"
+              title="Show the solver readout after each answer">RTA</button>
       <a href="/report">leak report →</a>
     </header>
 
@@ -232,12 +271,14 @@
           <div class="holecards" id="holecards"></div>
         </div>
       </div>
+      <aside class="rta" id="rta" hidden aria-live="polite"></aside>
     </div>
 
     <div class="console">
       <p id="description">Loading…</p>
       <div class="chipsrow" id="meta"></div>
       <div id="actions"></div>
+      <p id="action-note"></p>
       <p id="feedback"></p>
       <button id="next">Deal next spot</button>
     </div>
