@@ -6,3 +6,4 @@ solves/
 *.egg-info/
 .pytest_cache/
 .hypothesis/
+*.db
