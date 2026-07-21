@@ -221,6 +221,12 @@ def accuracy_by_kind(conn: sqlite3.Connection, kind: str | None = None,
     A kind with no attempts in the window is ABSENT, not 0.0: no data is not the
     same claim as no skill. `now` defaults to the current UTC time and is
     injectable so callers (and tests) can ask about a fixed instant.
+
+    Off-tree attempts carry a NULL ev_loss (the chart never priced the action —
+    store/schema.sql). SQL `AVG` skips NULLs, so `avg_ev_loss` is the mean over
+    PRICED attempts only, while `accuracy` counts every attempt including
+    off-tree ones — answered wrong is answered wrong, but an unpriced action
+    must never dilute an EV average with a fabricated 0.
     """
     ref = now if now is not None else datetime.now(timezone.utc).isoformat()
     rows = conn.execute(

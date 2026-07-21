@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from pokerlab.drills import generator as gen
 from pokerlab.drills import scheduler as sch
-from pokerlab.drills.scoring import score
+from pokerlab.drills.scoring import MIX_FREQ, epsilon, score
 from pokerlab.hh import persist
 from pokerlab.hh.tiers import TIER_LABELS
 from pokerlab.store import db, views
@@ -155,6 +155,14 @@ def _spot_json(drill: gen.Drill) -> dict:
         "hand": drill.hand_label,
         "description": drill.description,
         "legal_actions": list(drill.legal_actions),
+        # Submittable DISTRACTORS outside the solved game (generator.Drill):
+        # rendered as buttons, graded as framework deviations with no EV
+        # number. Kept apart from legal_actions so the page can never claim
+        # the chart priced them.
+        "off_tree_actions": list(drill.off_tree_actions),
+        # Server-authored sentence for spots whose action set is complete at
+        # two (BB facing an all-in) — the page renders it, never authors it.
+        "action_note": drill.action_note,
         "pot_bb": drill.pot_bb,
         "tournament": None if tc is None else {
             "players_remaining": tc.players_remaining,
@@ -180,6 +188,51 @@ def _explain(result, action: str, unit: str, verb: str) -> str:
     return (f"{verdict}. {verb} {result.best_action} here — you chose "
             f"{action} (freq {result.chosen_frequency:.0%}, "
             f"EV loss {result.ev_loss_bb:.2f}{unit}).")
+
+
+def _rta_json(drill: gen.Drill) -> dict:
+    """The post-answer RTA panel: real solver quantities only.
+
+    Every number is read straight from the drill's `Solution` and the
+    decision-ε that actually grades it — per-action EV and chart frequency,
+    the best action as EV-argmax, ε converted into the drill's own payoff
+    currency via bb_value ([P7']). The reasoning sentence is server-authored
+    FROM those numbers (plan §9: the page renders server words, never its own
+    claims), so it can state the EV gap and the acceptance rule without the
+    page inventing either.
+    """
+    acts = drill.solution.actions
+    best = max(acts, key=lambda a: acts[a][0])
+    eps = epsilon(drill.pot_bb, bb_value=drill.bb_value)
+    unit = EV_UNITS[drill.kind]
+    verb = SOURCE_VERBS[drill.solution.source]
+    # Derived, not assumed two-action: the runner-up is the best of the rest.
+    runner = max((a for a in acts if a != best), key=lambda a: acts[a][0])
+    gap = acts[best][0] - acts[runner][0]
+    reasoning = (
+        f"{verb} {best} at {acts[best][1]:.0%} frequency — its EV beats "
+        f"{runner} by {gap:.2f} {unit}. An answer grades correct when it "
+        f"gives up at most ε = {eps:.2f} {unit} to the best action, or when "
+        f"the chart itself mixes it at ≥{MIX_FREQ:.0%}."
+    )
+    if drill.kind == "icm":
+        # The unit conversion is part of WHY the grade is sound, so it is
+        # stated where the numbers are: EVs are prize-pool deltas and ε is
+        # scaled by the average chip's pool value (scoring.epsilon).
+        reasoning += (
+            f" EVs here are prize-pool deltas ({unit}); 1bb of chips is worth "
+            f"{drill.bb_value:.2f} of pool value, which is what scales ε."
+        )
+    return {
+        "best_action": best,
+        "epsilon": eps,
+        "bb_value": drill.bb_value,
+        "actions": [
+            {"action": a, "ev": float(ev), "frequency": float(f)}
+            for a, (ev, f) in acts.items()
+        ],
+        "reasoning": reasoning,
+    }
 
 
 def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
@@ -217,31 +270,56 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 raise HTTPException(404, f"unknown drill_id {ans.drill_id!r}")
             if ans.drill_id == last["drill_id"]:
                 return last["response"]          # type: ignore[return-value]
-            try:
-                # bb_value converts the decision-ε into the drill's own payoff
-                # currency ([P7']); it is 1.0 for chip-EV and the average chip
-                # value for ICM. Without it ICM was graded exact-argmax.
-                result = score(drill.solution, ans.action, drill.pot_bb,
-                               bb_value=drill.bb_value)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+            rta = _rta_json(drill)
+            if ans.action in drill.off_tree_actions:
+                # OFF-TREE distractor: a real button, but outside the solved
+                # game — the chart never priced it, so no ev_loss exists and
+                # none is fabricated (0.0 would claim a wrong action cost
+                # nothing; the gradings tier-3 rule applied here). Incorrect
+                # by construction, persisted with ev_loss NULL so EV trends
+                # skip it while accuracy still counts it.
+                correct, ev_loss, chosen_frequency = False, None, None
+                priced = "/".join(drill.legal_actions)
+                explanation = (
+                    f"Incorrect — off the solved tree. This drill prices only "
+                    f"{priced}; {SOURCE_VERBS[drill.solution.source]} "
+                    f"{rta['best_action']} here. \"{ans.action}\" may exist "
+                    f"at the table, but the chart never solved it, so it has "
+                    f"no EV number — it is graded wrong, not costed."
+                )
+            else:
+                try:
+                    # bb_value converts the decision-ε into the drill's own
+                    # payoff currency ([P7']); 1.0 for chip-EV, the average
+                    # chip value for ICM. Without it ICM was exact-argmax.
+                    result = score(drill.solution, ans.action, drill.pot_bb,
+                                   bb_value=drill.bb_value)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                correct = result.correct
+                ev_loss = result.ev_loss_bb
+                chosen_frequency = result.chosen_frequency
+                explanation = _explain(result, ans.action,
+                                       EV_UNITS[drill.kind],
+                                       SOURCE_VERBS[drill.solution.source])
             now = datetime.now(timezone.utc)
             db.insert_drill_attempt(conn, drill.leak_key, drill.kind, ans.action,
-                                    result.correct, result.ev_loss_bb,
-                                    now.isoformat())
-            sch.schedule_attempt(conn, drill.leak_key, result.correct, now)
+                                    correct, ev_loss, now.isoformat())
+            sch.schedule_attempt(conn, drill.leak_key, correct, now)
             payload = {
                 "drill_id": drill.drill_id,
-                "correct": result.correct,
+                "correct": correct,
                 # `ev_loss` + `ev_unit`, not `ev_loss_bb`: the old key asserted
                 # the unit in its NAME, which was false for ICM drills. A field
-                # name is a claim like any other ([P7']).
-                "ev_loss": result.ev_loss_bb,
+                # name is a claim like any other ([P7']). None for off-tree.
+                "ev_loss": ev_loss,
                 "ev_unit": EV_UNITS[drill.kind],
-                "best_action": result.best_action,
-                "chosen_frequency": result.chosen_frequency,
-                "explanation": _explain(result, ans.action, EV_UNITS[drill.kind],
-                                       SOURCE_VERBS[drill.solution.source]),
+                "best_action": rta["best_action"],
+                "chosen_frequency": chosen_frequency,
+                "explanation": explanation,
+                # The RTA panel rides on EVERY answer; the page decides whether
+                # to show it (a display toggle), never whether it exists.
+                "rta": rta,
             }
             last["drill_id"], last["response"] = ans.drill_id, payload
             return payload

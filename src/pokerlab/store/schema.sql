@@ -108,7 +108,13 @@ CREATE TABLE IF NOT EXISTS drill_attempts(
   kind TEXT NOT NULL,
   chosen TEXT NOT NULL,
   correct INTEGER NOT NULL,
-  ev_loss REAL NOT NULL,
+  -- NULL iff the attempt chose an OFF-TREE action (limp / raise-size on a
+  -- jam/fold drill): the chart never priced that action, so no EV number
+  -- exists — the same NULL-means-unpriced rule gradings.ev_loss uses for
+  -- tier 3. Fabricating any number here (including 0.0) would claim a wrong
+  -- action cost nothing. EV-loss trend views must skip NULLs; accuracy
+  -- counts the attempt normally (it was answered, and answered wrong).
+  ev_loss REAL,
   ts TEXT NOT NULL
 );
 

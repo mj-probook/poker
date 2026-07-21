@@ -151,3 +151,28 @@ def test_a_legacy_db_that_already_double_graded_fails_loudly(tmp_path):
     p = _legacy_db(tmp_path / "dup.db", duplicate=True)
     with pytest.raises(sqlite3.IntegrityError, match="DUPLICATE gradings"):
         db.connect(p)
+
+
+def test_legacy_drill_attempts_gains_nullable_ev_loss(tmp_path):
+    """A drill_attempts created before off-tree actions carried NOT NULL on
+    ev_loss; an off-tree attempt (NULL — the chart never priced it) must be
+    insertable after connect, with every legacy row surviving the rebuild.
+    SQLite cannot drop NOT NULL via ALTER, so this exercises the table rebuild.
+    """
+    p = tmp_path / "old.db"
+    c = sqlite3.connect(str(p))
+    c.execute("CREATE TABLE drill_attempts(id INTEGER PRIMARY KEY,"
+              " leak_key TEXT NOT NULL, kind TEXT NOT NULL,"
+              " chosen TEXT NOT NULL, correct INTEGER NOT NULL,"
+              " ev_loss REAL NOT NULL, ts TEXT NOT NULL)")
+    c.execute("INSERT INTO drill_attempts(leak_key, kind, chosen, correct,"
+              " ev_loss, ts) VALUES ('k', 'jamfold', 'fold', 1, 0.5, 't1')")
+    c.commit()
+    c.close()
+    conn = db.connect(p)
+    db.insert_drill_attempt(conn, "k", "jamfold", "limp", correct=False,
+                            ev_loss=None, ts="t2")
+    rows = [(r["chosen"], r["ev_loss"]) for r in conn.execute(
+        "SELECT chosen, ev_loss FROM drill_attempts ORDER BY id")]
+    assert rows == [("fold", 0.5), ("limp", None)]
+    db.connect(p)  # rebuild must be idempotent — second open is a no-op

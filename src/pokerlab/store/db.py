@@ -117,17 +117,41 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS failed_hands_site_raw_uq"
                  " ON failed_hands(site, raw)")
 
+    # drill_attempts.ev_loss: NOT NULL -> nullable. An off-tree attempt (limp /
+    # raise-size on a jam/fold drill) has NO priced EV — the chart never solved
+    # that action, and fabricating a number (including 0.0) would claim a wrong
+    # action cost nothing (the schema.sql comment; same NULL-means-unpriced rule
+    # as gradings tier-3). SQLite cannot drop NOT NULL via ALTER, so a legacy
+    # table is rebuilt: rename it aside, let the checked-in schema recreate the
+    # current shape, copy every row (all satisfy the weaker constraint), drop.
+    (notnull,) = conn.execute(
+        "SELECT [notnull] FROM pragma_table_info('drill_attempts')"
+        " WHERE name = 'ev_loss'").fetchone()
+    if notnull:
+        conn.execute("ALTER TABLE drill_attempts"
+                     " RENAME TO drill_attempts_legacy")
+        conn.executescript(schema_sql())  # recreates the CURRENT shape
+        conn.execute(
+            "INSERT INTO drill_attempts(id, leak_key, kind, chosen, correct,"
+            "                           ev_loss, ts)"
+            " SELECT id, leak_key, kind, chosen, correct, ev_loss, ts"
+            "   FROM drill_attempts_legacy")
+        conn.execute("DROP TABLE drill_attempts_legacy")
+
 
 # --------------------------------------------------------------------------- #
 # drill_attempts
 # --------------------------------------------------------------------------- #
 def insert_drill_attempt(conn: sqlite3.Connection, leak_key: str, kind: str,
-                         chosen: str, correct: bool, ev_loss: float,
+                         chosen: str, correct: bool, ev_loss: float | None,
                          ts: str) -> int:
+    """`ev_loss` is None iff the attempt chose an off-tree action — the chart
+    never priced it, so no number exists (see the schema comment)."""
     cur = conn.execute(
         "INSERT INTO drill_attempts(leak_key, kind, chosen, correct, ev_loss, ts)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (leak_key, kind, chosen, int(bool(correct)), float(ev_loss), ts),
+        (leak_key, kind, chosen, int(bool(correct)),
+         None if ev_loss is None else float(ev_loss), ts),
     )
     conn.commit()
     return int(cur.lastrowid)
