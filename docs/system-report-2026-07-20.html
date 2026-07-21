@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poker Lab — System Report</title>
+<style>
+:root{
+  --paper:#F7F6F1; --surface:#EFEEE6; --ink:#1D231E; --muted:#5B655C;
+  --felt:#1F6E43; --felt-soft:#DCE9E0; --brass:#96762A; --suit-red:#A93B2E;
+  --line:#D8D9CE; --code-bg:#ECEBE2;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:"Avenir Next",Avenir,"Helvetica Neue",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --paper:#141814; --surface:#1B211C; --ink:#E6E9E3; --muted:#9AA69C;
+  --felt:#4FAE79; --felt-soft:#20362A; --brass:#C9A45C; --suit-red:#D06A57;
+  --line:#2C352E; --code-bg:#1F2620;
+}}
+:root[data-theme="dark"]{
+  --paper:#141814; --surface:#1B211C; --ink:#E6E9E3; --muted:#9AA69C;
+  --felt:#4FAE79; --felt-soft:#20362A; --brass:#C9A45C; --suit-red:#D06A57;
+  --line:#2C352E; --code-bg:#1F2620;
+}
+:root[data-theme="light"]{
+  --paper:#F7F6F1; --surface:#EFEEE6; --ink:#1D231E; --muted:#5B655C;
+  --felt:#1F6E43; --felt-soft:#DCE9E0; --brass:#96762A; --suit-red:#A93B2E;
+  --line:#D8D9CE; --code-bg:#ECEBE2;
+}
+html{background:var(--paper)}
+body{background:var(--paper);color:var(--ink);font-family:var(--serif);line-height:1.55;margin:0}
+.wrap{max-width:72ch;margin:0 auto;padding:0 1.25rem 6rem}
+h1,h2,h3{text-wrap:balance;line-height:1.15}
+h1{font-size:2.3rem;font-weight:600;margin:.4rem 0 .6rem}
+h2{font-size:1.5rem;margin:0 0 .8rem}
+h3{font-size:1.12rem;margin:1.4rem 0 .4rem}
+p{margin:.7rem 0}
+a{color:var(--felt);text-decoration-thickness:1px;text-underline-offset:2px}
+code,.mono{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:.08em .32em;border-radius:3px;font-variant-numeric:tabular-nums}
+.eyebrow{font-family:var(--sans);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--felt);font-weight:600}
+.masthead{border-bottom:3px double var(--line);padding:2.6rem 0 1.1rem;margin-bottom:1.2rem}
+.masthead .date{font-family:var(--sans);font-size:.8rem;color:var(--muted);letter-spacing:.05em}
+.suits{color:var(--felt);letter-spacing:.35em;font-size:1rem}
+.suits .r{color:var(--suit-red)}
+.statusbar{display:flex;flex-wrap:wrap;gap:.45rem;margin:1rem 0 0}
+.chip{font-family:var(--mono);font-size:.72rem;border:1px solid var(--line);border-radius:999px;padding:.18rem .6rem;background:var(--surface);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip b{color:var(--felt);font-weight:600}
+.chip.ship{border-color:var(--felt);background:var(--felt-soft)}
+.toc{font-family:var(--sans);font-size:.85rem;border:1px solid var(--line);border-radius:8px;padding:.9rem 1.1rem;margin:1.4rem 0;background:var(--surface)}
+.toc ol{margin:.3rem 0 0;padding-left:1.2rem}
+.toc li{margin:.18rem 0}
+section{margin-top:3rem;border-top:1px solid var(--line);padding-top:1.6rem}
+.secno{font-family:var(--sans);font-weight:700;color:var(--brass);font-size:.85rem;letter-spacing:.1em}
+table{border-collapse:collapse;width:100%;font-size:.88rem;margin:.8rem 0;font-variant-numeric:tabular-nums}
+th{font-family:var(--sans);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:.35rem .6rem .35rem 0;border-bottom:1.5px solid var(--ink)}
+td{padding:.4rem .6rem .4rem 0;border-bottom:1px solid var(--line);vertical-align:top}
+td.n,th.n{text-align:right;font-family:var(--mono);font-size:.82rem}
+.tablewrap{overflow-x:auto}
+details.dive{border:1px solid var(--line);border-radius:8px;margin:.7rem 0;background:var(--surface)}
+details.dive>summary{cursor:pointer;padding:.75rem 1rem;font-family:var(--sans);font-weight:600;font-size:.95rem;list-style:none;display:flex;gap:.6rem;align-items:baseline}
+details.dive>summary::before{content:"+";font-family:var(--mono);color:var(--felt);font-weight:700;width:1em}
+details.dive[open]>summary::before{content:"–"}
+details.dive>summary .m{color:var(--brass);font-family:var(--mono);font-size:.78rem;font-weight:400}
+details.dive .body{padding:0 1.1rem 1rem;border-top:1px solid var(--line);font-size:.95rem}
+details.quiz{border-left:3px solid var(--brass);background:var(--surface);border-radius:0 8px 8px 0;margin:1.1rem 0;padding:.15rem 0}
+details.quiz>summary{cursor:pointer;padding:.6rem 1rem;font-family:var(--sans);font-size:.88rem;font-weight:600;list-style:none}
+details.quiz>summary::before{content:"Check yourself · ";color:var(--brass);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase}
+details.quiz .a{padding:0 1rem .7rem;font-size:.92rem}
+summary:focus-visible{outline:2px solid var(--felt);outline-offset:2px;border-radius:4px}
+button{font-family:var(--sans);font-size:.82rem;font-weight:600;color:var(--ink);background:var(--surface);border:1.5px solid var(--felt);border-radius:6px;padding:.4rem .85rem;cursor:pointer}
+button:hover{background:var(--felt-soft)}
+button:focus-visible{outline:2px solid var(--felt);outline-offset:2px}
+.widget{border:1.5px solid var(--felt);border-radius:10px;padding:1.1rem 1.2rem;margin:1.3rem 0;background:var(--surface)}
+.widget .wtitle{font-family:var(--sans);font-weight:700;font-size:.95rem;margin:0 0 .15rem}
+.widget .wsub{font-size:.85rem;color:var(--muted);margin:0 0 .8rem}
+.controls{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.6rem 0}
+.bar-row{display:grid;grid-template-columns:2.2rem 1fr 4.5rem;gap:.6rem;align-items:center;margin:.3rem 0;font-family:var(--mono);font-size:.85rem}
+.bar-track{background:var(--code-bg);border-radius:4px;height:1.05rem;overflow:hidden}
+.bar-fill{height:100%;background:var(--felt);border-radius:4px;transition:width .15s ease}
+@media (prefers-reduced-motion: reduce){.bar-fill{transition:none}}
+.readout{font-family:var(--mono);font-size:.85rem;margin:.5rem 0 0;font-variant-numeric:tabular-nums}
+.readout b{color:var(--felt)}
+.slider-row{display:grid;grid-template-columns:5.5rem 1fr 5rem;gap:.7rem;align-items:center;margin:.35rem 0;font-family:var(--mono);font-size:.85rem}
+input[type=range]{width:100%;accent-color:var(--felt)}
+input[type=number]{font-family:var(--mono);font-size:.85rem;width:5rem;padding:.25rem .4rem;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink)}
+.note{font-size:.85rem;color:var(--muted);font-style:italic}
+.diagram{overflow-x:auto;border:1px solid var(--line);border-radius:8px;padding:.8rem;background:var(--surface);margin:1rem 0}
+.nogo{color:var(--suit-red);font-weight:700}
+.next li{margin:.55rem 0}
+.footer{margin-top:4rem;border-top:3px double var(--line);padding-top:1rem;font-family:var(--sans);font-size:.78rem;color:var(--muted)}
+ul,ol{padding-left:1.35rem}
+li{margin:.28rem 0}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header class="masthead">
+  <div class="suits">♠ <span class="r">♥</span> ♣ <span class="r">♦</span></div>
+  <p class="eyebrow" style="margin:.7rem 0 0">System Report · rev 1</p>
+  <h1>The Poker Lab</h1>
+  <p class="date">July 20, 2026 · prepared for MJ · covers the full build + four review rounds, shipped this morning</p>
+  <div class="statusbar">
+    <span class="chip ship"><b>SHIPPED</b> main @ 2e729fc</span>
+    <span class="chip">533 tests · 532 pass · 1 correct skip</span>
+    <span class="chip">suite <b>38.64s</b> idle</span>
+    <span class="chip">108 commits · ~14h build→ship</span>
+    <span class="chip"><a href="https://github.com/mj-probook/poker/pull/1">PR #1</a></span>
+  </div>
+</header>
+
+<nav class="toc">
+  <span class="eyebrow">Contents</span>
+  <ol>
+    <li><a href="#s1">What this is, in one screen</a></li>
+    <li><a href="#s2">Architecture — the two diagrams that explain everything</a></li>
+    <li><a href="#s3">How it works in depth — the loop, then every module</a></li>
+    <li><a href="#s4">What four review rounds proved</a></li>
+    <li><a href="#s5">Insights — what the results let us infer</a></li>
+    <li><a href="#s6">Next steps, in the order they unlock each other</a></li>
+  </ol>
+</nav>
+
+<section id="s1">
+<p class="secno">§1</p>
+<h2>What this is, in one screen</h2>
+<p>A single-process, local Python app with two jobs that share one codebase:</p>
+<ul>
+  <li><b>Learn game theory + RL by building it.</b> Every solver is written from scratch — the CFR family, exploitability/best-response, a heads-up subgame solver, a toy ReBeL — and each is verified against an independent oracle (PokerKit, OpenSpiel, brute force) rather than trusted.</li>
+  <li><b>Train you for live full-ring MTT poker.</b> Import your own hand histories, get every decision graded against exact answer keys, see your leaks ranked by real EV loss, and drill exactly those leaks on a spaced-repetition schedule.</li>
+</ul>
+<p>The load-bearing idea is <b>grading honesty</b>. The system refuses to pretend it knows things it doesn't: multiway postflop spots (where no trustworthy oracle exists) <em>never</em> get an EV-loss number — only frequency-deviation flags — and that rule is enforced by database triggers, not by convention. Every answer key is self-derived; nothing vendor-made ever enters the harness.</p>
+<details class="quiz"><summary>Why is “no ev_loss for multiway spots” enforced in the database rather than in code?</summary>
+<div class="a">Because code paths multiply and conventions decay. There are two schema triggers — one on INSERT, one on UPDATE (the second exists because a review round found the first alone let the rule back in through updates). Any future code path that tries to write an EV number for a tier-3 grading gets a hard <code>IntegrityError</code>, and tests prove the triggers actually fire. A promise you can't violate is worth more than a promise you remember.</div></details>
+</section>
+
+<section id="s2">
+<p class="secno">§2</p>
+<h2>Architecture</h2>
+<h3>The module DAG — what depends on what</h3>
+<p>Milestones M0–M7 form a dependency graph. Everything sits on the engine (M0) and the exploitability instrument (M1) — the two things that make every later claim checkable.</p>
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+  M0["M0 engine<br/>rules + pots + ICM math"] --> M3["M3 HU subgame solver<br/>river/turn, 25-flop fixture"]
+  M0 --> M4["M4 HH pipeline<br/>parse → tiered grading"]
+  M0 --> M6["M6 vectorized env<br/>+ exact best-response"]
+  M1["M1 CFR family<br/>+ exploitability/BR utility"] --> M3
+  M1 --> M5["M5 toy ReBeL<br/>Leduc, value net"]
+  M15["M1.5 chart engine<br/>ICM + jam/fold Nash"] --> M2["M2 drills + web UI"]
+  M2 --> M4
+  M3 -->|tier-2 solves| M4
+  M5 --> M7["M7 tiny-HUNL spike<br/>honest NO-GO"]
+</pre>
+</div>
+<h3>The training loop — how data moves when you use it</h3>
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+  HH["your hand-history files<br/>(PokerStars / GGPoker)"] --> P["parser<br/>per-hand isolation"]
+  P -->|fails| F["failed_hands<br/>named + surfaced, never dropped"]
+  P --> R["tier router<br/>every decision → exactly one tier"]
+  R -->|"tier 1: preflop / jam-fold"| C["chart engine — exact, instant"]
+  R -->|"tier 2: HU postflop"| S["solve library<br/>misses → overnight batch queue"]
+  R -->|"tier 3: multiway"| POP["population flags only<br/>(never ev_loss)"]
+  C --> G["gradings"]
+  S --> G
+  POP --> G
+  G --> L["leak report<br/>top-5 by EV-loss/100, exact tiers"]
+  L --> SR["SM-2 scheduler<br/>(sr_state)"]
+  SR --> D["drills — web UI"]
+  D --> A["drill_attempts"]
+  A --> SG["skill gates<br/>accuracy + EV-loss trend"]
+  A --> SR
+</pre>
+</div>
+<h3>Storage, deliberately boring</h3>
+<p>SQLite, seven tables: <code>imported_hands</code>, <code>gradings</code>, <code>drill_attempts</code>, <code>sr_state</code>, <code>solution_index</code>, plus two the build earned — <code>failed_hands</code> (so a hand that fails to parse leaves a durable, named trace) and <code>batch_queue</code> (overnight tier-2 solves). Solve payloads live on disk keyed by SpotKey. The rule that keeps it honest: <b>derived metrics are queries, never tables</b> — leak rankings and skill gates are computed fresh from the raw rows, so they can't silently go stale.</p>
+</section>
+
+<section id="s3">
+<p class="secno">§3</p>
+<h2>How it works, in depth</h2>
+<p>Each module below expands. The order is the order the system was built in — which is also the best order to read the code, because each layer is verified against the one before it.</p>
+
+<details class="dive"><summary>M0 · Engine <span class="m">src/pokerlab/engine — the ground truth</span></summary><div class="body">
+<p>A full no-limit hold'em rules engine: betting, side pots, all-in ladders, showdowns, tournament blinds/antes (including BB-ante), and the ICM/payout math. It is the one component everything else must trust, so it's the one component that's <em>never</em> trusted: a <b>differential harness</b> plays millions of seeded random hands simultaneously through this engine and through PokerKit (an independent open-source engine) and demands identical pot/stack/showdown outcomes.</p>
+<p>Three axes run at 1M hands each in the soak (random full-ring, short-stack all-in ladders, BB-ante across 2–9 seats) — <b>zero mismatches</b>. The fast suite mirrors them at 20k. One documented carve-out: an “odd-chip” class (≤1% of hands) where the engines split a leftover chip between <em>identically-ranked</em> winners differently — a labelling difference, totals always agree. A review round proved this tolerance could never have masked a real bug: the one real chip bug found (a BB-ante refund error) produced deltas of ±100 chips against a tolerance cap of 3.</p>
+<details class="quiz"><summary>Why differential testing instead of hand-written test cases?</summary><div class="a">Hand-written cases cover the situations you thought of. A seeded random generator over millions of hands covers the situations you didn't — and poker's bugs live in the freak stacks: three-way all-ins with two side pots and a dead ante. The 20k fast axis detects a bug appearing in 0.02% of hands with ~98% probability; cutting it to 5k would drop that to 63%, which is why the review rounds refused every axis cut.</div></details>
+</div></details>
+
+<details class="dive"><summary>M1 · CFR + the exploitability instrument <span class="m">src/pokerlab/cfr — the learning heart</span></summary><div class="body">
+<p><b>Counterfactual Regret Minimization</b> is the algorithm family behind every modern poker solver. The idea: play the game against yourself millions of times; at every decision point, track how much you <em>regret</em> not having taken each action; shift probability toward high-regret actions; the <em>average</em> strategy over all iterations converges to a Nash equilibrium. The lab implements vanilla CFR, CFR+ (regret flooring — much faster), and MCCFR (sampled), verified on Kuhn and Leduc poker to NashConv ≤ 1e-3 (achieved 3.5e-4 / 4.7e-4), and cross-checked bit-for-bit against OpenSpiel's reference implementation.</p>
+<p>Just as important is the <b>exploitability utility</b> built alongside it: given any strategy, compute the best possible counter-strategy and how much it wins. That number — NashConv — is the honest score for every solver in the lab. “It converged” is a feeling; “a perfect opponent beats it by 0.0003 chips per hand” is a measurement.</p>
+<div class="widget">
+  <p class="wtitle">Watch regret matching find an equilibrium</p>
+  <p class="wsub">Rock–paper–scissors, two regret-matching agents in self-play — the exact primitive CFR runs at every decision point of a poker tree. Bars show the <em>average</em> strategy; the readout is its exploitability (how much a best-responding opponent would win). Watch it fall toward zero as the strategy finds ⅓ / ⅓ / ⅓.</p>
+  <div class="controls">
+    <button id="rps1">+1 iteration</button>
+    <button id="rps100">+100</button>
+    <button id="rps10k">+10,000</button>
+    <button id="rpsreset">reset</button>
+  </div>
+  <div class="bar-row"><span>R</span><div class="bar-track"><div class="bar-fill" id="barR" style="width:33%"></div></div><span id="pctR">33.3%</span></div>
+  <div class="bar-row"><span>P</span><div class="bar-track"><div class="bar-fill" id="barP" style="width:33%"></div></div><span id="pctP">33.3%</span></div>
+  <div class="bar-row"><span>S</span><div class="bar-track"><div class="bar-fill" id="barS" style="width:33%"></div></div><span id="pctS">33.3%</span></div>
+  <p class="readout">iterations: <b id="rpsIter">0</b> · exploitability of average strategy: <b id="rpsExpl">—</b></p>
+  <p class="note">Try +1 a few times first: the <em>current</em> strategy lurches around chasing regret — it's the average that converges. That distinction (current vs average) is the single most misunderstood thing about CFR.</p>
+</div>
+</div></details>
+
+<details class="dive"><summary>M1.5 · Chart engine <span class="m">src/pokerlab/charts — your answer keys</span></summary><div class="body">
+<p>Two pieces. First, <b>Malmuth-Harville ICM</b>: converts tournament chip stacks into real-money equity, verified within 0.1% against reference values. Second, <b>jam/fold Nash charts</b>: for short-stack play (≤20bb), the game reduces to shove-or-fold, which is small enough to solve <em>exactly</em> with CFR+ — for chip-EV and, crucially, for ICM ($-denominated) at any payout ladder. Measured exploitability of the shipped charts: ≤ 2.7e-6 of the pool — effectively perfect.</p>
+<p>These charts are the tier-1 answer keys. They're checked against a 33-entry hand-audited reference set (100% agreement) — but the audit is a sanity cross-reference only. The chart's <em>correctness</em> rests on the exploitability measurement, because per the project's rules no vendor chart may ever serve as an oracle.</p>
+<div class="widget">
+  <p class="wtitle">Feel ICM: why a chip is not a chip</p>
+  <p class="wsub">Three players left, payouts below. Drag the stacks. Malmuth-Harville computes each player's real-money equity — watch the <b>$/chip</b> column: the short stack's chips are always worth <em>more each</em> than the big stack's. That asymmetry is why correct bubble play folds hands that chip-EV would snap-call with.</p>
+  <div class="slider-row"><span>P1 stack</span><input type="range" id="st1" min="100" max="9000" value="5000" step="100"><span id="sv1">5000</span></div>
+  <div class="slider-row"><span>P2 stack</span><input type="range" id="st2" min="100" max="9000" value="3000" step="100"><span id="sv2">3000</span></div>
+  <div class="slider-row"><span>P3 stack</span><input type="range" id="st3" min="100" max="9000" value="2000" step="100"><span id="sv3">2000</span></div>
+  <div class="controls">payouts: $<input type="number" id="pay1" value="500"> $<input type="number" id="pay2" value="300"> $<input type="number" id="pay3" value="200"></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>player</th><th class="n">chips</th><th class="n">chip share</th><th class="n">ICM $EV</th><th class="n">$ / 1k chips</th></tr></thead>
+    <tbody id="icmBody"></tbody>
+  </table></div>
+  <p class="note" id="icmNote"></p>
+</div>
+<details class="quiz"><summary>Set the payouts to 1000 / 0 / 0 (winner-take-all). What happens, and why does it matter?</summary><div class="a">Every $/chip equalizes — ICM collapses to chip-EV exactly, because with only first place paid, your equity is just your probability of finishing first, which Malmuth-Harville models as your chip share. The flatter the remaining ladder, the more ICM pressure; the more top-heavy, the more it plays like a cash game. The R4 review measured this on the real solver: the bubble ladder solves nearly pure (1.8% of actions near-indifferent) while a top-heavy ladder mixes <em>more</em> than chip-EV (16.9% vs 12.3%).</div></details>
+</div></details>
+
+<details class="dive"><summary>M3 · HU subgame solver <span class="m">src/pokerlab/solver — real postflop answers</span></summary><div class="body">
+<p>A heads-up postflop solver: given a spot (board, stacks, pot, bet grid), run CFR+ over the subgame tree with card-isomorphism bucketing (suit symmetries collapse the tree massively). Verified two ways: its internal best-response instrument matches exhaustive brute force to 1e-9, and solved rivers on the 25-flop fixture reach ≤0.5% pot exploitability (achieved 0.29% river, 0.42% turn+river). Solves are cached on disk and indexed by SpotKey — this is the tier-2 grading oracle.</p>
+<p>Two recorded limits, deliberately: full-flop solves take ~1h each in pure Python, so the all-25-flops bar is deferred behind the planned Rust hot-loop port (the API seam is already in place); and tier-2 solves currently approximate both players' ranges as uniform — an approximation that, after R4, is disclosed on every grading it touches, all the way to the report page.</p>
+</div></details>
+
+<details class="dive"><summary>M2 · Drills + web UI <span class="m">src/pokerlab/drills, web — where you train</span></summary><div class="body">
+<p>A drill is a spot plus an exact answer key. The scoring rule is honest about indifference: you're wrong only if your action's EV loss exceeds a threshold ε <em>and</em> the solution doesn't mix it at meaningful frequency — near-indifferent actions aren't punished, because punishing them teaches false precision. ICM drills grade in real dollars (ε converts by the ladder's $/chip). The harness proved a chart-perfect reference agent scores 100% (bar: ≥98%) and a deliberately bad agent scores 54% — both directions of the instrument verified.</p>
+<p>The SM-2 spaced-repetition scheduler feeds you drills from your worst leak categories. A deliberate property discovered in review: for a <em>struggling</em> user its variety floor saturates at 4 categories regardless of syllabus size — it hammers what's bleeding. If you're answering well, it roams the full syllabus. If drills feel repetitive, that's information.</p>
+</div></details>
+
+<details class="dive"><summary>M4 · Hand-history pipeline <span class="m">src/pokerlab/hh — your real hands, graded</span></summary><div class="body">
+<p>Parsers for PokerStars (auto-saved files) and GGPoker (Pokercraft exports, tolerant of its anonymized fields), a byte-faithful multi-hand splitter (chunks provably reassemble into the exact input file), and per-hand failure isolation: a hand that fails to parse lands in <code>failed_hands</code> — named by its hand number when the header revealed one, surfaced in the session summary and the report, never silently dropped, and its raw text kept so it can heal after a parser fix.</p>
+<p>Then the tier router sends every single decision to exactly one oracle: <b>tier 1</b> preflop/jam-fold → charts (exact, instant); <b>tier 2</b> HU-postflop → solve library, misses queued for overnight batch solving, the session marked <em>partial</em> until <em>its</em> batch completes; <b>tier 3</b> multiway → population-frequency flags only. The leak report separates exact from approximate tiers and ranks your top-5 leaks by EV-loss per 100 hands on the exact tiers only.</p>
+<details class="quiz"><summary>Your nightly cron imports 200 hands and 3 need overnight solves. What does the system promise about that session's report?</summary><div class="a">It's marked <code>partial: true</code> until those 3 solves land — scoped to <em>that session's</em> batch (R4 fixed the API, which had been reporting any DB-wide backlog as everyone's problem). The 197 graded decisions are readable immediately; the leak rankings will shift only when the batch drains. And if any hand failed to parse, it's in the report by name — a failed hand costing you silent data loss is the one outcome the pipeline was built to make impossible.</div></details>
+</div></details>
+
+<details class="dive"><summary>M5 + M7 · ReBeL and the spike <span class="m">src/pokerlab/rebel, spike — the research arc</span></summary><div class="body">
+<p><b>M5 (Leduc, works):</b> ReBeL's core idea is depth-limited solving — don't solve to the end of the game; solve a few streets deep and let a trained <em>value network</em> estimate what the leaves are worth, conditioned on both players' belief distributions. On toy-scale Leduc, everything the theory promises, happens: safe re-solving with oracle leaf values reaches NashConv 0.00112 (bar 2e-3), and the trained net (held-out RMSE 7e-4) is gated by agreement with the full solve.</p>
+<p><b>M7 (tiny-HUNL, honest <span class="nogo">NO-GO</span>):</b> scaling the same recipe to a clipped hold'em — locally, on this machine, within the spend cap — fails the go bar at <b>ratio ≈ 17×</b>: net-driven resolving is 3.257bb exploitable vs the oracle baseline's 0.191bb, reproduced across seeds three independent times. What makes this the most instructive artifact in the repo is the post-mortem discipline: the intuitive explanation (“the net was queried on beliefs it never trained on”) was <em>measured and rejected</em> — on exactly the beliefs CFR queries, the net predicts within 1.09× of its held-out accuracy. A second mechanism (garbage predictions on degenerate beliefs leaking into regrets) was also measured and rejected (−0.3%). The gap stands honestly unattributed, with the true structural suspect recorded: training beliefs are sampled independently, but real leaf beliefs are <em>strategy-weighted reaches CFR walked to</em> — and no sampling parameter closes that; only self-play data generation (the real ReBeL loop) does.</p>
+</div></details>
+
+<details class="dive"><summary>M6 · Vectorized env + best response <span class="m">src/pokerlab/env — the RL substrate</span></summary><div class="body">
+<p>A numpy-vectorized batch environment (~1.02M hands/min, 20× the target) that passes the <em>same</em> M0 differential suite through a single-env adapter — the env is proven equivalent to the engine, not assumed. Beside it, an exact tabular best-response exploiter: point it at a bot (e.g., the perturbation bots with VPIP/aggression knobs) and it computes the maximally exploiting counter-strategy, verified identical to brute force. This is the substrate for any future “train an exploiter against a player pool” work.</p>
+</div></details>
+</section>
+
+<section id="s4">
+<p class="secno">§4</p>
+<h2>What four review rounds proved</h2>
+<p>The build was reviewed four times by independent lanes, with every finding cross-validated (author-stripped — validators judged claims on evidence without knowing whose they were) and every fix re-verified by someone other than its author.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>round</th><th>instrument</th><th class="n">findings</th><th>headline</th></tr></thead>
+<tbody>
+<tr><td>R1</td><td>full-repo review</td><td class="n">22</td><td>all confirmed and fixed</td></tr>
+<tr><td>R2</td><td>per-module adversarial</td><td class="n">95</td><td>29/29 P0–P1 cross-validated, zero rejects</td></tr>
+<tr><td>R3</td><td>fresh eyes incl. the spike</td><td class="n">41</td><td>engine BB-ante P0 caught by adding a third differential axis; the spike's causal story falsified by counterexample</td></tr>
+<tr><td>R4</td><td>plan-vs-built audit</td><td class="n">51 promises</td><td>32 delivered · 6 recorded deviations · 5 recorded deferrals · 8 unrecorded gaps, both P1s closed same-day</td></tr>
+</tbody></table></div>
+<p>The R4 audit's most important output wasn't a bug — it was <b>verifying the honesty rules as built</b>: the tier-3 triggers fire (proven by tests, both INSERT and UPDATE), zero vendor-derived content exists anywhere in the repo, derived metrics really are queries, and every recorded deviation is recorded where it claims to be. The final suite: 532 passed, 1 skip (the TexasSolver comparison, correctly skipping because no binary is installed — the honest direction), 38.64s on an idle machine.</p>
+</section>
+
+<section id="s5">
+<p class="secno">§5</p>
+<h2>Insights — what the results let us infer</h2>
+
+<h3>About poker</h3>
+<ol>
+<li><b>“Solver sharpness” is a property of the payout ladder, not of ICM.</b> Measured across four ladders: the bubble structure solves nearly pure (1.8% of actions near-indifferent, and the wrong ones lose 1.85× the threshold at the 10th percentile), a flat ladder solves <em>perfectly</em> pure (0.0%), while a top-heavy ladder mixes <em>more than chip-EV does</em> (16.9% vs 12.3%). Training read: <b>the bubble is where study pays most</b> — answers are close to deterministic, so mistakes there are both most punishable and most learnable. Deep final-table play against top-heavy ladders is inherently mixed; expect (and forgive) lower drill accuracy there.</li>
+<li><b>The $-per-chip asymmetry is large enough to reverse decisions.</b> On the bubble fixture the chip→dollar conversion runs ~25× between contexts (and is provably scale-free — a property of Malmuth-Harville's linearity, not the pool size). Chip-EV instincts imported from cash games are systematically too loose near bubbles.</li>
+</ol>
+
+<h3>About the RL experiment</h3>
+<ol start="3">
+<li><b>Model accuracy was never the bottleneck — data distribution was.</b> The spike's value net predicts <em>well</em> even on the sparse beliefs CFR actually queries (1.09× its held-out error) — yet the agent it powers is 17× more exploitable than the oracle baseline. Two intuitive mechanisms were measured and excluded. What remains is structural: <b>training beliefs were sampled independently; real leaf beliefs are strategy-weighted reaches the solver walked to</b>. No tuning parameter aligns those distributions — only generating data along the solver's own trajectory (true ReBeL self-play) does. This is the local, reproducible version of a deep RL lesson: where your data comes from beats how well your model fits it.</li>
+<li><b>Training loss is not a proxy for playing strength — proven, not asserted.</b> A run with lower value-net loss produced <em>24% worse</em> exploitability. The go/no-go gate was measured on exploitability directly, which is why the NO-GO verdict survived three attempted explanations while the numbers never moved.</li>
+<li><b>Unsafe subgame decomposition fails at any scale.</b> The Leduc net-driven ceiling (~0.42 NashConv from spurious round-1 equilibria) is a property of the decomposition, not of compute — which is precisely why ReBeL's “safe re-solving” machinery exists, and the lab's safe variant hits its bar on the same game.</li>
+</ol>
+
+<h3>Assumptions the system stands on — stated, not hidden</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>assumption</th><th>where it bites</th><th>status</th></tr></thead>
+<tbody>
+<tr><td>Malmuth-Harville: finish probabilities ∝ chip stacks</td><td>all ICM math — ignores position, skill edge, blind pressure</td><td>industry standard; known optimistic for short stacks in the blinds</td></tr>
+<tr><td>Tier-2 solves: uniform ranges, symmetric stacks</td><td>every solver-graded postflop decision</td><td>disclosed on every grading it touches, store→report (R4)</td></tr>
+<tr><td>Population table: own observations, 5 spots today</td><td>tier-3 flags — currently weak evidence, honest “no baseline” elsewhere</td><td>degrades to no-signal, never a wrong signal</td></tr>
+<tr><td>PokerKit as engine oracle</td><td>the differential's authority</td><td>mitigated: 3 independent axes + property tests + hand-computed ICM fixtures</td></tr>
+<tr><td>Charts target Nash, not maximal exploitation</td><td>vs weak fields, Nash leaves money on the table</td><td>deliberate: unexploitable baseline first; exploiter substrate (M6) exists</td></tr>
+</tbody></table></div>
+
+<h3>About building with verification</h3>
+<ol start="6">
+<li><b>The seams between components caught the worst bugs.</b> Both P0-class defects in the product lane were found by <em>driving the user's surface</em> (concatenating fixtures the way real PokerStars files arrive; importing twice the way cron does) — not by any unit test. Its mirror: every false alarm came from probing a narrower input than the invariant assumes. Same instrument, both directions.</li>
+<li><b>A measured number that lives only in prose decays silently.</b> The scheduler's variety floor (4) sat in a comment until R4 derived it from its governing constant and pinned it with a test verified at six parameter values. Prose degrades; only a test fails.</li>
+<li><b>Structure beat size on performance.</b> The suite grew +52% in tests while getting <em>27% faster</em> (52.9s → 38.6s) — because the fix was parallelism-shape (xdist with the differential's internal pools divided by worker count), chosen from a lever order pre-registered <em>before</em> the breach measurement existed. Deciding the order before knowing the number is what kept a detection-power-destroying shortcut (halving a differential axis) off the table.</li>
+</ol>
+</section>
+
+<section id="s6">
+<p class="secno">§6</p>
+<h2>Next steps, in the order they unlock each other</h2>
+<ol class="next">
+<li><b>Merge <a href="https://github.com/mj-probook/poker/pull/1">PR #1</a></b> and start the habit: the plan's own skill gate is <em>training-daily</em>, tracked as a KPI. Import your real PokerStars/GGPoker sessions (nightly cron on <code>pokerlab-import</code> + <code>pokerlab-batch</code>), and let the leak report tell you what to drill. The system is complete for this today.</li>
+<li><b>The Rust port</b> (seams already in place, drop-in by design): the M3 solver hot loop first — it converts full-flop solves from ~1h to minutes, which unlocks the deferred all-25-flops bar <em>and</em> makes overnight tier-2 batches effectively instant. The M6 env port (pyo3) rides the same pattern.</li>
+<li><b>The ReBeL self-play loop</b> — the one structural gap the spike proved matters: generate value-net training data along the solver's own trajectory instead of by independent sampling. The closure gate (<code>v7_invariant.py</code>, preserved at <code>~/pokerlab-data/reviews/</code>) is designed to stay failing until exactly this lands; if it ever passes without this work, distrust the gate, not celebrate.</li>
+<li><b>Widen the syllabus</b> when tier-2 drills arrive: resteal, ante-adjusted, final-table ladders, postflop drills from your own solve library — and the deferred range-grid UI becomes worth building at the same moment, since those are the drills whose answers are range-shaped.</li>
+<li><b>Grow the population table</b> from your own imported hands (the promised generator-priors and bot-target consumers are recorded as deferred until these drills exist), and point the M6 exact exploiter at population-styled bots to study <em>maximally exploiting</em> weak fields — the step beyond Nash.</li>
+</ol>
+<p>Everything above is recorded in <code>docs/PLAN.md</code> rev 3.3 with its deferral rationale — none of it is a loose end; all of it is a decision.</p>
+</section>
+
+<footer class="footer">
+<p>Poker Lab · System Report · July 20, 2026 · main @ <span class="mono">2e729fc</span> · Full records: <span class="mono">poker-lab.design.md</span> §7 and <span class="mono">poker-lab.impl.md</span> §4 (Obsidian) · review archives at <span class="mono">~/pokerlab-data/reviews/r4/</span> · spike datasets at <span class="mono">~/pokerlab-data/spike/</span></p>
+<p>♠ <span style="color:var(--suit-red)">♥</span> ♣ <span style="color:var(--suit-red)">♦</span> — built from scratch, verified against independent oracles, honest about what it doesn't know.</p>
+</footer>
+</div>
+
+<script>
+(function(){
+  // ---- RPS regret matching (RM+) self-play ----
+  var r1=[0,0,0], r2=[0,0,0], s1=[0,0,0], s2=[0,0,0], iters=0;
+  function u(a,b){ var d=(a-b+3)%3; return d===0?0:(d===1?1:-1); }
+  function strat(r){ var pos=r.map(function(x){return x>0?x:0;}), t=pos[0]+pos[1]+pos[2];
+    return t>0?pos.map(function(x){return x/t;}):[1/3,1/3,1/3]; }
+  function step(n){
+    for(var k=0;k<n;k++){
+      var q1=strat(r1), q2=strat(r2), ev1=[0,0,0], ev2=[0,0,0], a, b;
+      for(a=0;a<3;a++){ for(b=0;b<3;b++){ ev1[a]+=q2[b]*u(a,b); ev2[a]+=q1[b]*(-u(b,a)); } }
+      var v1=0,v2=0;
+      for(a=0;a<3;a++){ v1+=q1[a]*ev1[a]; v2+=q2[a]*ev2[a]; }
+      for(a=0;a<3;a++){
+        r1[a]=Math.max(0, r1[a]+ev1[a]-v1);   // RM+ flooring, as in CFR+
+        r2[a]=Math.max(0, r2[a]+ev2[a]-v2);
+        s1[a]+=q1[a]; s2[a]+=q2[a];
+      }
+      iters++;
+    }
+    render();
+  }
+  function avg(s){ var t=s[0]+s[1]+s[2]; return t>0?s.map(function(x){return x/t;}):[1/3,1/3,1/3]; }
+  function render(){
+    var a1=avg(s1), a2=avg(s2), ids=[["barR","pctR"],["barP","pctP"],["barS","pctS"]], i;
+    for(i=0;i<3;i++){
+      document.getElementById(ids[i][0]).style.width=(a1[i]*100).toFixed(1)+"%";
+      document.getElementById(ids[i][1]).textContent=(a1[i]*100).toFixed(1)+"%";
+    }
+    var br1=-1/0, br2=-1/0, a, b, e;
+    for(a=0;a<3;a++){ e=0; for(b=0;b<3;b++) e+=a2[b]*u(a,b); if(e>br1)br1=e; }
+    for(a=0;a<3;a++){ e=0; for(b=0;b<3;b++) e+=a1[b]*(-u(b,a)); if(e>br2)br2=e; }
+    document.getElementById("rpsIter").textContent=iters.toLocaleString();
+    document.getElementById("rpsExpl").textContent=iters?("NashConv "+(br1+br2).toFixed(5)):"—";
+  }
+  document.getElementById("rps1").addEventListener("click",function(){step(1);});
+  document.getElementById("rps100").addEventListener("click",function(){step(100);});
+  document.getElementById("rps10k").addEventListener("click",function(){step(10000);});
+  document.getElementById("rpsreset").addEventListener("click",function(){
+    r1=[0,0,0];r2=[0,0,0];s1=[0,0,0];s2=[0,0,0];iters=0;render();});
+  render();
+
+  // ---- Malmuth-Harville ICM ----
+  function mh(stacks,payouts){
+    var n=stacks.length, eq=stacks.map(function(){return 0;});
+    function rec(rem,place,prob){
+      if(place>=payouts.length||rem.length===0) return;
+      var S=0,i; for(i=0;i<rem.length;i++) S+=stacks[rem[i]];
+      if(S<=0) return;
+      for(i=0;i<rem.length;i++){
+        var pi=prob*stacks[rem[i]]/S;
+        eq[rem[i]]+=pi*payouts[place];
+        rec(rem.slice(0,i).concat(rem.slice(i+1)),place+1,pi);
+      }
+    }
+    rec(stacks.map(function(_,i){return i;}),0,1);
+    return eq;
+  }
+  function icmRender(){
+    var st=[+document.getElementById("st1").value,+document.getElementById("st2").value,+document.getElementById("st3").value];
+    var pay=[+document.getElementById("pay1").value||0,+document.getElementById("pay2").value||0,+document.getElementById("pay3").value||0];
+    document.getElementById("sv1").textContent=st[0].toLocaleString();
+    document.getElementById("sv2").textContent=st[1].toLocaleString();
+    document.getElementById("sv3").textContent=st[2].toLocaleString();
+    var eq=mh(st,pay), T=st[0]+st[1]+st[2], rows="", i, per=[];
+    for(i=0;i<3;i++){
+      per[i]=eq[i]/st[i]*1000;
+      rows+="<tr><td>P"+(i+1)+"</td><td class='n'>"+st[i].toLocaleString()+"</td><td class='n'>"+
+        (st[i]/T*100).toFixed(1)+"%</td><td class='n'>$"+eq[i].toFixed(2)+"</td><td class='n'>$"+per[i].toFixed(2)+"</td></tr>";
+    }
+    document.getElementById("icmBody").innerHTML=rows;
+    var mx=Math.max.apply(null,per), mn=Math.min.apply(null,per);
+    document.getElementById("icmNote").textContent = (mn>0&&mx/mn>1.001)
+      ? "The shortest stack's chips are worth "+(mx/mn).toFixed(2)+"× more per chip than the biggest stack's. That ratio IS bubble pressure."
+      : "With this ladder, every chip is worth the same — ICM has collapsed to chip-EV.";
+  }
+  ["st1","st2","st3"].forEach(function(id){document.getElementById(id).addEventListener("input",icmRender);});
+  ["pay1","pay2","pay3"].forEach(function(id){document.getElementById(id).addEventListener("input",icmRender);});
+  icmRender();
+})();
+</script>
+
+<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs"; mermaid.initialize({startOnLoad: true});</script>
+</body>
+</html>
