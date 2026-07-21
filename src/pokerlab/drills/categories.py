@@ -85,6 +85,22 @@ def jamfold_category(position: str, eff_bb: float, *, icm: bool = False,
     return f"{formation}|preflop|{_JAMFOLD_ACTION[pos]}|{token}"
 
 
+def ring_category(position: str, eff_bb: float, *, versus: str | None = None,
+                  ante_bb: float = 0.0) -> str:
+    """Canonical category for a 9-max first-in push/fold spot.
+
+    `versus=None` is the jammer's own decision (`COjam|preflop|jam|10`);
+    a defender names the jam it faces (`BBcall.vUTG|preflop|call|10`) because
+    defending vs UTG and vs BTN are different skills with different answer
+    keys — one formation token per chart, same rule as `.icm`.
+    """
+    pos = position.upper()
+    token = _depth_token(eff_bb, ante_bb)
+    if versus is None:
+        return f"{pos}jam|preflop|jam|{token}"
+    return f"{pos}call.v{versus.upper()}|preflop|call|{token}"
+
+
 def postflop_category(formation: str, street: str, action_type: str) -> str:
     """Canonical category for a non-push/fold spot (no depth bucket)."""
     return f"{formation}|{street}|{action_type}|{NO_DEPTH}"
