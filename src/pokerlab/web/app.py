@@ -292,9 +292,38 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
         by_cat.setdefault(d.leak_key, []).append(d)
     default_cat = population[0].leak_key
 
+    # Unseen-rung exploration order: round-robin across kinds, NOT population
+    # order. select_next serves never-drilled categories in the order the
+    # caller lists them, and population order put all 630 ring categories
+    # behind every HU/ICM one — a user who merged the ring feature clicked
+    # through spot after spot and saw nothing new (2026-07-22 report). The
+    # interleave is deterministic and only reorders EXPLORATION: due
+    # categories (real leaks) still outrank every unseen one.
+    by_kind: dict[str, list[str]] = {}
+    seen_cats: set[str] = set()
+    for d in population:
+        if d.leak_key not in seen_cats:
+            seen_cats.add(d.leak_key)
+            by_kind.setdefault(d.kind, []).append(d.leak_key)
+    cat_order: list[str] = []
+    lanes = list(by_kind.values())
+    for i in range(max(len(lane) for lane in lanes)):
+        for lane in lanes:
+            if i < len(lane):
+                cat_order.append(lane[i])
+
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
     rng = random.Random(seed)
+
+    # Local single-user tool: a cached page is only ever a stale page. Two
+    # separate user reports were the browser serving an old app.js after a
+    # merge; the remedy is server policy, not the user's keyboard discipline.
+    @app.middleware("http")
+    async def _no_store(request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     # Replay guard (round-2 finding [E43]): a double-click posts the same
     # drill_id twice and SM-2 counted both, inflating reps/interval off one
     # answer. Only the *immediately* repeated answer is absorbed — fetching the
@@ -305,7 +334,7 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     def next_drill() -> dict:
         with lock:
             now = datetime.now(timezone.utc)
-            cat = sch.select_next(conn, now, categories=by_cat.keys()) or default_cat
+            cat = sch.select_next(conn, now, categories=cat_order) or default_cat
             pool = by_cat.get(cat) or population
             last["drill_id"] = None
             return _spot_json(rng.choice(pool))
