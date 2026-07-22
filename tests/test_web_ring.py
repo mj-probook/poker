@@ -63,6 +63,36 @@ def test_icm_spot_keeps_seats_unattributed():
     assert _spot_json(d)["seats"] is None
 
 
+def test_fresh_app_interleaves_kinds_from_the_first_spots(tmp_path):
+    """New content must be discoverable IMMEDIATELY, not after the legacy
+    queue drains. The unseen rung serves the caller's category order, and
+    population order put all 630 ring categories behind every HU/ICM one —
+    the user merged the feature, clicked through spots, and saw nothing new
+    (2026-07-22 report). Round-robin by kind makes the first three fresh
+    spots span all three kinds."""
+    app = create_app(db_path=str(tmp_path / "fresh.db"), seed=0)
+    kinds = []
+    with TestClient(app) as client:
+        for _ in range(3):
+            spot = client.get("/api/drill/next").json()
+            kinds.append(spot["kind"])
+            best = max(spot["legal_actions"], key=lambda a: a)  # any answer
+            client.post("/api/drill/answer", json={
+                "drill_id": spot["drill_id"], "action": best})
+    assert set(kinds) == {"jamfold", "icm", "ring"}
+
+
+def test_nothing_is_browser_cached(tmp_path):
+    """Local single-user tool: a cached page is only ever a stale page. Two
+    user reports ("no visual card rendering", "I refreshed and still don't
+    see it") were this exact failure — the fix is server policy, not user
+    keyboard discipline."""
+    app = create_app(db_path=str(tmp_path / "cache.db"), seed=0)
+    with TestClient(app) as client:
+        for path in ("/", "/static/app.js", "/api/drill/next"):
+            assert client.get(path).headers.get("cache-control") == "no-store"
+
+
 def test_ring_answer_grades_end_to_end(tmp_path):
     app = create_app(db_path=str(tmp_path / "ring.db"), seed=0)
     with TestClient(app) as client:
