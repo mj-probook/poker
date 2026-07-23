@@ -290,7 +290,6 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     by_cat: dict[str, list[gen.Drill]] = {}
     for d in population:
         by_cat.setdefault(d.leak_key, []).append(d)
-    default_cat = population[0].leak_key
 
     # Unseen-rung exploration order: round-robin across kinds, NOT population
     # order. select_next serves never-drilled categories in the order the
@@ -312,6 +311,25 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             if i < len(lane):
                 cat_order.append(lane[i])
 
+    # Practice-filter vocabulary (2026-07-22 report: with SM-2 due-first
+    # ordering there was no way to reach a specific position ON DEMAND). A
+    # category's drills share kind/versus/position, so each category gets one
+    # (mode, position) tag; the filter narrows the vocabulary the scheduler
+    # sees and SM-2 still rules inside it. Modes are stated, not derived, so
+    # an unknown mode is a loud 400 rather than an empty pool.
+    def _mode_of(d: gen.Drill) -> str:
+        if d.kind == "jamfold":
+            return "hu"
+        if d.kind == "icm":
+            return "icm"
+        return "ring-defend" if d.versus else "ring-jam"
+
+    MODES = ("all", "hu", "icm", "ring-jam", "ring-defend")
+    cat_tag: dict[str, tuple[str, str]] = {}
+    for d in population:
+        cat_tag.setdefault(d.leak_key, (_mode_of(d), d.position))
+    positions = sorted({d.position for d in population})
+
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
     rng = random.Random(seed)
@@ -331,10 +349,24 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     last: dict[str, object] = {"drill_id": None, "response": None}
 
     @app.get("/api/drill/next")
-    def next_drill() -> dict:
+    def next_drill(mode: str = "all", pos: str = "all") -> dict:
+        if mode not in MODES:
+            raise HTTPException(400, f"unknown mode {mode!r}; valid: {MODES}")
+        if pos != "all" and pos not in positions:
+            raise HTTPException(
+                400, f"unknown position {pos!r}; valid: {sorted(positions)}")
+        allowed = [c for c in cat_order
+                   if (mode == "all" or cat_tag[c][0] == mode)
+                   and (pos == "all" or cat_tag[c][1] == pos)]
+        if not allowed:
+            # loud, never a silent fallback to the unfiltered pool — a filter
+            # that quietly widens itself is lying about what it serves
+            raise HTTPException(
+                400, f"no drills match mode={mode!r} pos={pos!r} "
+                     "(e.g. UTG never defends a jam — it acts first)")
         with lock:
             now = datetime.now(timezone.utc)
-            cat = sch.select_next(conn, now, categories=cat_order) or default_cat
+            cat = sch.select_next(conn, now, categories=allowed) or allowed[0]
             pool = by_cat.get(cat) or population
             last["drill_id"] = None
             return _spot_json(rng.choice(pool))

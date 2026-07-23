@@ -89,8 +89,56 @@ function showError(message) {
   fb.className = "incorrect";
 }
 
+// ---- practice filter: choose WHAT to drill, on demand ---------------------
+// The option lists are UI affordances only — the server owns the vocabulary
+// and answers an impossible combination with a loud 400 (shown via
+// showError), never a silent fallback.
+const MODE_POS = {
+  "all": [],
+  "hu": ["SB", "BB"],
+  "icm": ["SB", "BB"],
+  "ring-jam": ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN"],
+  "ring-defend": ["UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+};
+const modeSel = document.getElementById("mode");
+const posSel = document.getElementById("pos");
+
+function syncPosOptions() {
+  const opts = MODE_POS[modeSel.value] || [];
+  posSel.innerHTML = "";
+  const any = document.createElement("option");
+  any.value = "all";
+  any.textContent = "any";
+  posSel.appendChild(any);
+  opts.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p;
+    o.textContent = p;
+    posSel.appendChild(o);
+  });
+  posSel.disabled = opts.length === 0;
+}
+
+modeSel.value = localStorage.getItem("mode") || "all";
+if (!MODE_POS[modeSel.value]) modeSel.value = "all";
+syncPosOptions();
+const savedPos = localStorage.getItem("pos") || "all";
+if (MODE_POS[modeSel.value].indexOf(savedPos) !== -1) posSel.value = savedPos;
+
+modeSel.addEventListener("change", () => {
+  localStorage.setItem("mode", modeSel.value);
+  syncPosOptions();
+  localStorage.setItem("pos", "all");
+  loadNext();
+});
+posSel.addEventListener("change", () => {
+  localStorage.setItem("pos", posSel.value);
+  loadNext();
+});
+
 async function loadNext() {
-  const res = await fetch(API_NEXT);
+  const pos = posSel.disabled ? "all" : posSel.value || "all";
+  const res = await fetch(`${API_NEXT}?mode=${modeSel.value}&pos=${pos}`);
   if (!res.ok) {
     showError(`could not load the next drill: ${await errorText(res)}`);
     return;

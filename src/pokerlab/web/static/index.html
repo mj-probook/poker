@@ -231,6 +231,13 @@
     /* ---------- console ---------- */
     .console { max-width: 44rem; margin: 0 auto; padding: .6rem 1.2rem 3rem;
       text-align: center; }
+    .pickrow { display: flex; gap: 1.2rem; justify-content: center;
+      margin: .2rem 0 .4rem; font-size: .78rem; color: #ffffffa8;
+      letter-spacing: .05em; }
+    .pickrow select { font: inherit; background: #171310; color: var(--ivory);
+      border: 1px solid #ffffff33; border-radius: .35rem; padding: .18rem .45rem; }
+    .pickrow select:disabled { opacity: .4; }
+    .pickrow select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     #description { font-size: 1.12rem; font-weight: 600; margin: .4rem 0 .2rem;
       color: var(--ivory); }
     .chipsrow { display: flex; gap: .4rem; justify-content: center; margin: .3rem 0 .8rem; }
@@ -303,6 +310,20 @@
     </div>
 
     <div class="console">
+      <div class="pickrow">
+        <label>practice
+          <select id="mode">
+            <option value="all">everything</option>
+            <option value="hu">HU push/fold</option>
+            <option value="icm">ICM bubble</option>
+            <option value="ring-jam">9-max first-in</option>
+            <option value="ring-defend">9-max defend</option>
+          </select>
+        </label>
+        <label>position
+          <select id="pos"><option value="all">any</option></select>
+        </label>
+      </div>
       <p id="description">Loading…</p>
       <div class="chipsrow" id="meta"></div>
       <div id="actions"></div>
