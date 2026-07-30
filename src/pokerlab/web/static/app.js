@@ -21,7 +21,8 @@ let lastAnswer = null; // the full answer payload; renderRta reads its .rta
 // all-in. Off-tree distractors interleave with the priced actions and are
 // styled identically — a visual tell would give the answer away. Unknown
 // labels sort last rather than first.
-const ACTION_ORDER = ["fold", "limp", "call", "raise 2.2bb", "raise 3bb", "jam"];
+const ACTION_ORDER = ["fold", "check", "limp", "call", "bet 33%", "bet 75%",
+                      "raise 2.2bb", "raise 3bb", "jam"];
 const orderKey = (a) => {
   const i = ACTION_ORDER.indexOf(a);
   return i === -1 ? ACTION_ORDER.length : i;
@@ -89,8 +90,59 @@ function showError(message) {
   fb.className = "incorrect";
 }
 
+// ---- practice filter: choose WHAT to drill, on demand ---------------------
+// The option lists are UI affordances only — the server owns the vocabulary
+// and answers an impossible combination with a loud 400 (shown via
+// showError), never a silent fallback.
+const MODE_POS = {
+  "all": [],
+  "hu": ["SB", "BB"],
+  "icm": ["SB", "BB"],
+  "ring-jam": ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB"],
+  "ring-defend": ["UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+  "open": ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB"],
+  "resteal": ["UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+  "river": ["BB"],
+};
+const modeSel = document.getElementById("mode");
+const posSel = document.getElementById("pos");
+
+function syncPosOptions() {
+  const opts = MODE_POS[modeSel.value] || [];
+  posSel.innerHTML = "";
+  const any = document.createElement("option");
+  any.value = "all";
+  any.textContent = "any";
+  posSel.appendChild(any);
+  opts.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p;
+    o.textContent = p;
+    posSel.appendChild(o);
+  });
+  posSel.disabled = opts.length === 0;
+}
+
+modeSel.value = localStorage.getItem("mode") || "all";
+if (!MODE_POS[modeSel.value]) modeSel.value = "all";
+syncPosOptions();
+const savedPos = localStorage.getItem("pos") || "all";
+if (MODE_POS[modeSel.value].indexOf(savedPos) !== -1) posSel.value = savedPos;
+
+modeSel.addEventListener("change", () => {
+  localStorage.setItem("mode", modeSel.value);
+  syncPosOptions();
+  localStorage.setItem("pos", "all");
+  loadNext();
+});
+posSel.addEventListener("change", () => {
+  localStorage.setItem("pos", posSel.value);
+  loadNext();
+});
+
 async function loadNext() {
-  const res = await fetch(API_NEXT);
+  const pos = posSel.disabled ? "all" : posSel.value || "all";
+  const res = await fetch(`${API_NEXT}?mode=${modeSel.value}&pos=${pos}`);
   if (!res.ok) {
     showError(`could not load the next drill: ${await errorText(res)}`);
     return;
@@ -115,6 +167,14 @@ function heroCards(hand) {
   return suited ? [[r1, "♠"], [r2, "♠"]] : [[r1, "♠"], [r2, "♥"]];
 }
 
+// concrete card string from the server ("As", "9d") -> [rank, suit glyph].
+// Postflop payloads carry these because on a real board the suits ARE the
+// strategy — the synthetic display suits above would misstate the spot.
+const SUIT_GLYPH = { c: "♣", d: "♦", h: "♥", s: "♠" };
+function concreteCard(cs) {
+  return [cs[0], SUIT_GLYPH[cs[1]]];
+}
+
 function cardEl([rank, suit]) {
   const div = document.createElement("div");
   div.className = "card" + (suit === "♥" || suit === "♦" ? " red" : "");
@@ -132,7 +192,7 @@ function seatXY(i, n) {
   return [50 + 43 * Math.cos(angle), 50 + 38 * Math.sin(angle)];
 }
 
-function seatEl(x, y, { hero, pos, stack, cards, allin, folded }) {
+function seatEl(x, y, { hero, pos, stack, cards, allin, folded, bet }) {
   const seat = document.createElement("div");
   seat.className = "seat" + (hero ? " hero" : "") + (folded ? " folded" : "");
   seat.style.left = `${x}%`;
@@ -143,6 +203,9 @@ function seatEl(x, y, { hero, pos, stack, cards, allin, folded }) {
   // all-in replaces the stack number: those chips are in the middle now, and
   // a plate still reading "10bb" would state a stack the player no longer has
   if (allin) html += `<span class="allin">ALL-IN</span>`;
+  // a raise shows the amount in front; `stack` already carries the server's
+  // "behind" number for these seats
+  if (bet) html += `<span class="rbet">${bet}</span>`;
   if (folded) html += `<span class="foldtag">fold</span>`;
   html += `</div>`;
   if (cards) html += `<div class="cardsback"><div class="miniback"></div><div class="miniback"></div></div>`;
@@ -150,13 +213,14 @@ function seatEl(x, y, { hero, pos, stack, cards, allin, folded }) {
   return seat;
 }
 
-// jam chips pushed from a seat toward the pot, on the seat->center line
-function jamChipsEl(x, y) {
+// chips pushed from a seat toward the pot, on the seat->center line.
+// Three chips for a whole stack (all-in), one for a raise.
+function jamChipsEl(x, y, count) {
   const jc = document.createElement("div");
   jc.className = "jamchips";
-  jc.innerHTML =
-    `<div class="chip c1"></div><div class="chip c2"></div>` +
-    `<div class="chip c3"></div>`;
+  const chips = ['<div class="chip c1"></div>', '<div class="chip c2"></div>',
+                 '<div class="chip c3"></div>'];
+  jc.innerHTML = chips.slice(0, count || 3).join("");
   jc.style.left = `${x + (50 - x) * 0.38}%`;
   jc.style.top = `${y + (44 - y) * 0.38}%`;
   return jc;
@@ -237,18 +301,22 @@ function render(spot) {
         hero: s.state === "hero",
         pos: s.pos,
         // symmetric stacks are part of the solved model, so live seats may
-        // state the shared depth; a folded or all-in seat no longer has it
-        stack: s.state === "hero" || s.state === "live" ? spot.depth_bb : null,
-        cards: s.state === "live" || s.state === "all-in",
+        // state the shared depth; a raiser's plate carries the server's
+        // "behind" number; a folded or all-in seat shows no stack
+        stack: s.state === "hero" || s.state === "live" ? spot.depth_bb
+             : s.state === "raise" ? s.behind : null,
+        cards: s.state === "live" || s.state === "all-in" || s.state === "raise",
         allin: s.state === "all-in",
         folded: s.state === "folded",
+        bet: s.state === "raise" ? s.bet : null,
       });
       if (s.state === "hero") {
         heroSeatEl = el;
         el.className += " toact"; // pulses until the answer lands
       }
       seatsBox.appendChild(el);
-      if (s.state === "all-in") seatsBox.appendChild(jamChipsEl(x, y));
+      if (s.state === "all-in") seatsBox.appendChild(jamChipsEl(x, y, 3));
+      if (s.state === "raise") seatsBox.appendChild(jamChipsEl(x, y, 1));
       if (s.pos === btnPos) {
         const d = document.createElement("div");
         d.className = "dbtn";
@@ -274,10 +342,21 @@ function render(spot) {
     }
   }
 
-  // hero hole cards
+  // community cards — server facts, drawn only when the payload states them
+  const boardBox = document.getElementById("board");
+  boardBox.innerHTML = "";
+  (spot.board || []).forEach((cs) => boardBox.appendChild(cardEl(concreteCard(cs))));
+
+  // hero hole cards: concrete server cards when stated (postflop), else the
+  // 169-class label with synthetic display suits (preflop)
   const hole = document.getElementById("holecards");
   hole.innerHTML = "";
-  heroCards(spot.hand).forEach((c) => hole.appendChild(cardEl(c)));
+  const heroC = spot.hero_cards ? spot.hero_cards.map(concreteCard)
+                                : heroCards(spot.hand);
+  heroC.forEach((c) => hole.appendChild(cardEl(c)));
+
+  // tier-2 provenance, server words only (null for chart drills hides it)
+  document.getElementById("provenance").textContent = spot.provenance || "";
 
   // actions: priced + off-tree distractor buttons, one indistinguishable row
   // in poker order. Distractors are the server's (spot.off_tree_actions) —

@@ -120,29 +120,27 @@ def test_report_js_renders_the_servers_tier_label_rather_than_its_own():
     assert "no baseline" in js
 
 
-def test_the_tier_1_claim_on_every_drill_is_warranted_by_its_solution():
-    """`_spot_json` asserts tier 1 for EVERY drill — pin that it is entitled to.
+def test_the_tier_claim_on_every_drill_is_warranted_by_its_solution():
+    """Every drill's served tier label must be WARRANTED by who answered it.
 
-    The comment beside that line says the tier is "stated, not assumed, because
-    a future solver-backed drill kind must not silently inherit a
-    'chart-graded' claim". It described a protection that did not exist: the
-    value was hardcoded and nothing checked the drill was chart-sourced, so the
-    claim held for all 5408 drills on the strength of a 1-drill pin elsewhere.
-    A comment asserting an enforcement is worse than no comment — it stops the
-    next reader re-deriving it (r2-edge-hunter). Fourth instance of the
-    recorded-vs-landed pattern, this time as a code comment.
-
-    This is the enforcement. Direct analogue of the EV_UNITS kind pin: the
-    served tier label is only honest while every drill really is answered by
-    the in-house chart engine, so the first non-chart drill kind fails HERE
-    rather than shipping a false "exact — chart-graded" badge on a load-bearing
-    UI surface (plan §9).
+    History: `_spot_json` originally hardcoded tier 1 for every drill, with a
+    comment claiming a protection that did not exist; the first version of
+    this test pinned `sources == {"chart"}` so the first non-chart kind would
+    fail here instead of shipping a false "exact — chart-graded" badge
+    (plan §9, r2-edge-hunter). River drills are that first kind: the tier is
+    now a Drill fact `_spot_json` renders, so the enforcement moves with it —
+    the (source, tier) pairing is pinned per drill, exhaustively. A source
+    outside this table must fail HERE, not inherit either label.
     """
-    sources = {d.solution.source for d in gen.default_population()}
-    assert sources == {"chart"}, (
-        f"_spot_json claims TIER_CHART for every drill, but the population "
-        f"carries sources {sorted(sources)} — the tier label is no longer "
-        f"warranted and must be derived per drill, not hardcoded")
+    from pokerlab.types import TIER_CHART, TIER_SOLVER
+    warranted_tier = {"chart": TIER_CHART, "subgame_solver": TIER_SOLVER}
+    for d in gen.default_population():
+        assert d.solution.source in warranted_tier, (
+            f"{d.drill_id}: source {d.solution.source!r} has no pinned tier "
+            "— extend the warrant table deliberately, never by default")
+        assert d.tier == warranted_tier[d.solution.source], (
+            f"{d.drill_id}: claims tier {d.tier} but its answer came from "
+            f"{d.solution.source!r} — the served tier label would be false")
 
 
 # --------------------------------------------------------------------------- #

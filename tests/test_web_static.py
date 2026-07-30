@@ -104,3 +104,28 @@ def test_ordinal_helper_is_correct_including_the_11_to_13_irregulars():
                          timeout=30)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout.strip().splitlines()[-1]) == expected
+
+
+def test_app_js_renders_the_postflop_scene_from_server_facts():
+    """River drills ship a real board and concrete hero cards; the page must
+    draw exactly those server facts — board slot, concrete-suit mapping,
+    provenance sentence — and offer the check/bet buttons in poker order."""
+    js = (STATIC / "app.js").read_text()
+    for field in ("spot.board", "spot.hero_cards", "spot.provenance"):
+        assert field in js, field
+    # concrete suit chars map to glyphs (synthetic display suits would
+    # misstate a postflop spot — the suits are the strategy on a board)
+    for glyph in ("♣", "♦", "♥", "♠"):
+        assert glyph in js
+    # postflop actions have an order slot like every other button
+    for action in ('"check"', '"bet 33%"', '"bet 75%"'):
+        assert action in js, action
+    # the river practice mode exists, hero-side only (BB is the root actor)
+    assert '"river": ["BB"]' in js
+
+
+def test_index_has_the_postflop_slots():
+    html = (STATIC / "index.html").read_text()
+    assert 'id="board"' in html
+    assert 'id="provenance"' in html
+    assert 'value="river"' in html

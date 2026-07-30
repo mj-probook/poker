@@ -133,6 +133,12 @@
       padding: .2rem .85rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .actionline:empty { display: none; }
 
+    /* community cards, between the action line and the pot (river drills) */
+    .board { position: absolute; left: 50%; top: 57%; transform: translate(-50%, -50%);
+      display: flex; gap: .3rem; z-index: 3; }
+    .board:empty { display: none; }
+    .board .card { width: 2.2rem; height: 3.1rem; font-size: .72rem; }
+
     /* pot */
     .pot { position: absolute; left: 50%; top: 40%; transform: translateX(-50%);
       text-align: center; z-index: 3; }
@@ -160,6 +166,8 @@
        states the state instead of a stack number */
     .seat .plate .allin { color: #ff9d8a; font-weight: 800; font-size: .68rem;
       letter-spacing: .09em; }
+    .seat .plate .rbet { color: var(--gold); font-weight: 700; font-size: .68rem;
+      letter-spacing: .05em; font-variant-numeric: tabular-nums; }
     .seat.folded { opacity: .45; }
     .seat.folded .plate { border-color: #ffffff17; }
     .seat .plate .foldtag { font-size: .62rem; color: #ffffff73;
@@ -231,6 +239,13 @@
     /* ---------- console ---------- */
     .console { max-width: 44rem; margin: 0 auto; padding: .6rem 1.2rem 3rem;
       text-align: center; }
+    .pickrow { display: flex; gap: 1.2rem; justify-content: center;
+      margin: .2rem 0 .4rem; font-size: .78rem; color: #ffffffa8;
+      letter-spacing: .05em; }
+    .pickrow select { font: inherit; background: #171310; color: var(--ivory);
+      border: 1px solid #ffffff33; border-radius: .35rem; padding: .18rem .45rem; }
+    .pickrow select:disabled { opacity: .4; }
+    .pickrow select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     #description { font-size: 1.12rem; font-weight: 600; margin: .4rem 0 .2rem;
       color: var(--ivory); }
     .chipsrow { display: flex; gap: .4rem; justify-content: center; margin: .3rem 0 .8rem; }
@@ -252,6 +267,11 @@
     #actions button[data-action="fold"] {
       background: radial-gradient(120% 160% at 50% 0%, #ffffff20, transparent 50%), #3a3a38; }
     #actions button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+    /* tier-2 disclosure: the server's provenance sentence, small but present */
+    #provenance { font-size: .72rem; color: #a89f8e; font-style: italic;
+      margin: .1rem 0 0; overflow-wrap: anywhere; }
+    #provenance:empty { display: none; }
+
     #action-note { font-size: .78rem; color: #ffffff96; font-style: italic;
       margin: -0.2rem 0 .8rem; min-height: 1rem; }
     #feedback { min-height: 3.4rem; font-size: .98rem; max-width: 40rem; margin: 0 auto;
@@ -294,6 +314,7 @@
           <div class="ladder" id="ladder"></div>
           <div class="stacksline" id="stacksline"></div>
           <div class="actionline" id="actionline"></div>
+          <div class="board" id="board"></div>
           <div class="pot" id="pot"></div>
           <div id="seats"></div>
           <div class="holecards" id="holecards"></div>
@@ -303,8 +324,26 @@
     </div>
 
     <div class="console">
+      <div class="pickrow">
+        <label>practice
+          <select id="mode">
+            <option value="all">everything</option>
+            <option value="hu">HU push/fold</option>
+            <option value="icm">ICM bubble</option>
+            <option value="ring-jam">9-max first-in (jam/fold)</option>
+            <option value="ring-defend">9-max defend vs jam</option>
+            <option value="open">first-in open (raises priced)</option>
+            <option value="resteal">resteal vs raise</option>
+            <option value="river">river (solver-graded)</option>
+          </select>
+        </label>
+        <label>position
+          <select id="pos"><option value="all">any</option></select>
+        </label>
+      </div>
       <p id="description">Loading…</p>
       <div class="chipsrow" id="meta"></div>
+      <p id="provenance"></p>
       <div id="actions"></div>
       <p id="action-note"></p>
       <p id="feedback"></p>

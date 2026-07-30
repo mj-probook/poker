@@ -89,6 +89,9 @@ EV_UNITS: dict[str, str] = {
     "jamfold": "bb",
     "icm": "ICM-$",
     "ring": "bb",
+    "open": "bb",
+    "resteal": "bb",
+    "river": "bb",
 }
 
 # WHICH ORACLE decided the best action, in the feedback line's own words
@@ -110,6 +113,7 @@ EV_UNITS: dict[str, str] = {
 # different one.
 SOURCE_VERBS: dict[str, str] = {
     "chart": "Chart plays",
+    "subgame_solver": "Solver plays",
 }
 
 # What a tier-2 approximation actually means, in the server's words (PLAN §5.3
@@ -152,15 +156,25 @@ def _seats_json(drill: gen.Drill) -> list[dict] | None:
     jam_i = drill.table.index(drill.versus) if drill.versus else hero_i
     out = []
     for i, pos in enumerate(drill.table):
+        seat = {"pos": pos}
         if i == hero_i:
-            state = "hero"
+            seat["state"] = "hero"
         elif drill.versus and i == jam_i:
-            state = "all-in"
+            if drill.versus_action == "all-in":
+                seat["state"] = "all-in"
+            else:
+                # a raise is not an all-in: the seat shows the raise amount
+                # and what is still BEHIND it — a plate claiming the full
+                # stack would state chips the raise already put in front
+                r = float(drill.versus_action.split()[1].removesuffix("bb"))
+                seat["state"] = "raise"
+                seat["bet"] = f"{r:g}bb"
+                seat["behind"] = drill.depth_bb - r
         elif i < hero_i:
-            state = "folded"
+            seat["state"] = "folded"
         else:
-            state = "live"
-        out.append({"pos": pos, "state": state})
+            seat["state"] = "live"
+        out.append(seat)
     return out
 
 
@@ -168,7 +182,12 @@ def _action_line(drill: gen.Drill) -> str:
     """The prior action in the server's words. Never enumerates the hero's
     options (the button row contains distractors)."""
     if drill.versus:
-        return f"{drill.versus} is all-in for {drill.depth_bb:g}bb — action on you"
+        if drill.versus_action == "all-in":
+            return (f"{drill.versus} is all-in for {drill.depth_bb:g}bb "
+                    f"— action on you")
+        return (f"{drill.versus} "
+                f"{drill.versus_action.replace('raise ', 'raises to ')} "
+                f"— action on you")
     if drill.table and drill.position != drill.table[0]:
         return "Folded to you — action on you"
     return "Action on you"
@@ -180,12 +199,21 @@ def _spot_json(drill: gen.Drill) -> dict:
         "drill_id": drill.drill_id,
         "kind": drill.kind,
         # Which oracle graded this, in the payload itself (plan §9: tier labels
-        # are load-bearing UI). Every drill the generator emits is answered by
-        # the in-house chart engine, so every drill is tier 1 — stated, not
-        # assumed, because a future solver-backed drill kind must not silently
-        # inherit a "chart-graded" claim.
-        "tier": TIER_CHART,
-        "tier_label": TIER_LABELS[TIER_CHART],
+        # are load-bearing UI). A Drill fact since river drills shipped: chart
+        # kinds are tier 1, solver-graded postflop is tier 2 — the page
+        # renders the tier's label, never assumes one.
+        "tier": drill.tier,
+        "tier_label": TIER_LABELS[drill.tier],
+        # Postflop scene facts: the concrete board and the hero's concrete
+        # cards (on a real board the suits are the strategy, so a synthetic-
+        # suit display would misstate the spot). Empty/None preflop.
+        "board": list(drill.board),
+        "hero_cards": list(drill.hero_cards) or None,
+        # Tier-2 disclosure, server words: WHAT game the solver was handed
+        # (fixture ranges, line, grid) and the measured gap. None for tier 1,
+        # whose range_ctx is an internal cache key, not page copy.
+        "provenance": (drill.solution.range_ctx
+                       if drill.tier != TIER_CHART else None),
         # Independent of tier — see EV_UNITS. Carried on the spot as well as on
         # the answer so the page can label the stakes before the user commits.
         "ev_unit": EV_UNITS[drill.kind],
@@ -198,7 +226,7 @@ def _spot_json(drill: gen.Drill) -> dict:
         # decision with no action). Server-authored — the page draws these
         # words and never derives its own account of what happened.
         "action_line": _action_line(drill),
-        "facing_allin": bool(drill.versus),
+        "facing_allin": drill.versus_action == "all-in",
         # Per-seat states in action order where attribution is a rules fact,
         # None where it is not (ICM) — see _seats_json.
         "seats": _seats_json(drill),
@@ -290,7 +318,6 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     by_cat: dict[str, list[gen.Drill]] = {}
     for d in population:
         by_cat.setdefault(d.leak_key, []).append(d)
-    default_cat = population[0].leak_key
 
     # Unseen-rung exploration order: round-robin across kinds, NOT population
     # order. select_next serves never-drilled categories in the order the
@@ -312,6 +339,26 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
             if i < len(lane):
                 cat_order.append(lane[i])
 
+    # Practice-filter vocabulary (2026-07-22 report: with SM-2 due-first
+    # ordering there was no way to reach a specific position ON DEMAND). A
+    # category's drills share kind/versus/position, so each category gets one
+    # (mode, position) tag; the filter narrows the vocabulary the scheduler
+    # sees and SM-2 still rules inside it. Modes are stated, not derived, so
+    # an unknown mode is a loud 400 rather than an empty pool.
+    def _mode_of(d: gen.Drill) -> str:
+        if d.kind == "jamfold":
+            return "hu"
+        if d.kind in ("icm", "open", "resteal", "river"):
+            return d.kind
+        return "ring-defend" if d.versus else "ring-jam"
+
+    MODES = ("all", "hu", "icm", "ring-jam", "ring-defend", "open", "resteal",
+             "river")
+    cat_tag: dict[str, tuple[str, str]] = {}
+    for d in population:
+        cat_tag.setdefault(d.leak_key, (_mode_of(d), d.position))
+    positions = sorted({d.position for d in population})
+
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
     rng = random.Random(seed)
@@ -331,10 +378,24 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     last: dict[str, object] = {"drill_id": None, "response": None}
 
     @app.get("/api/drill/next")
-    def next_drill() -> dict:
+    def next_drill(mode: str = "all", pos: str = "all") -> dict:
+        if mode not in MODES:
+            raise HTTPException(400, f"unknown mode {mode!r}; valid: {MODES}")
+        if pos != "all" and pos not in positions:
+            raise HTTPException(
+                400, f"unknown position {pos!r}; valid: {sorted(positions)}")
+        allowed = [c for c in cat_order
+                   if (mode == "all" or cat_tag[c][0] == mode)
+                   and (pos == "all" or cat_tag[c][1] == pos)]
+        if not allowed:
+            # loud, never a silent fallback to the unfiltered pool — a filter
+            # that quietly widens itself is lying about what it serves
+            raise HTTPException(
+                400, f"no drills match mode={mode!r} pos={pos!r} "
+                     "(e.g. UTG never defends a jam — it acts first)")
         with lock:
             now = datetime.now(timezone.utc)
-            cat = sch.select_next(conn, now, categories=cat_order) or default_cat
+            cat = sch.select_next(conn, now, categories=allowed) or allowed[0]
             pool = by_cat.get(cat) or population
             last["drill_id"] = None
             return _spot_json(rng.choice(pool))
@@ -364,6 +425,11 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                     f"at the table, but the chart never solved it, so it has "
                     f"no EV number — it is graded wrong, not costed."
                 )
+                # the bridge to where that action IS priced: raises on a
+                # jam/fold drill have a real chart now — in the open game
+                if ans.action.startswith("raise") and drill.kind != "open":
+                    explanation += (" Raises are priced in the 'first-in "
+                                    "open' practice mode.")
             else:
                 try:
                     # bb_value converts the decision-ε into the drill's own

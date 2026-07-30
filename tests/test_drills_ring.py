@@ -52,6 +52,21 @@ def test_ring_defense_drill_shape(drills):
     assert d.table == RING_ORDER
 
 
+def test_sb_ring_formation_closes_the_ante_seam(drills):
+    """Folded-to-SB at 9 players has seven extra antes of dead money the HU
+    chart never priced (the seam ring.py documents). The 9-max SB formation
+    exists under its OWN key — the HU `SBjam` keys stay byte-identical so no
+    sr_state/gradings row is orphaned."""
+    assert ring_category("SB", 10.0) == "SBjam.9max|preflop|jam|10"
+    sb = next(d for d in drills if d.position == "SB" and not d.versus
+              and d.depth_bb == 10.0)
+    assert sb.leak_key.startswith("SBjam.9max|")
+    assert "9-max" in sb.description
+    # and the BB defends against it under the ring naming
+    bb = next(d for d in drills if d.versus == "SB" and d.position == "BB")
+    assert bb.leak_key.startswith("BBcall.vSB|")
+
+
 def test_hu_drills_name_their_jammer():
     hu = jamfold_drills(depths=(10,))
     bb = next(d for d in hu if d.position == "BB")

@@ -280,7 +280,14 @@ class _TreeBuilder:
         # (`build` seeds both seats with stack0) and betting keeps them so, but
         # the collapse is silent if that ever stops holding — the Chance node
         # would report the shorter stack as though it were both (wave-3 [M11]).
-        assert stack[0] == stack[1], (
+        #
+        # Tolerance, not `==`: a called bet reaches this node via two float
+        # paths (bettor: stack − bet; caller: stack − to_call), and a 0.33-pot
+        # bet at the flops25 geometry leaves 33.111 vs 33.111000000000004 —
+        # equal stacks, unequal bits. `==` made the entire DEFAULT grid crash
+        # on tree build while every single-size test grid passed (2026-07-29).
+        # Genuinely asymmetric stacks (a logic bug) still fail loudly.
+        assert abs(stack[0] - stack[1]) < 1e-6, (
             f"asymmetric stacks at a chance node: {stack} — the subgame solver "
             "assumes symmetric stacks (see tier2.effective_behind_bb)")
         return Chance(children, float(divisor), pot, float(min(stack)))

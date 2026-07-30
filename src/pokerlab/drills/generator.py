@@ -23,10 +23,14 @@ import numpy as np
 from pokerlab.charts import hands, jamfold_range
 from pokerlab.charts.equity import load_equity_matrix
 from pokerlab.charts.jamfold import icm_model, joint_prior, solve_jamfold_icm
+from pokerlab.charts.openraise import (OPEN_FORMATIONS, open_ctx,
+                                       open_solution)
 from pokerlab.charts.ring import (RING_JAMMERS, RING_ORDER,
                                   ring_defense_range, ring_range)
-from pokerlab.drills.categories import ANTES, jamfold_category, ring_category
-from pokerlab.types import Solution, TournamentContext
+from pokerlab.drills.categories import (ANTES, jamfold_category,
+                                        open_category, resteal_category,
+                                        ring_category)
+from pokerlab.types import TIER_CHART, Solution, TournamentContext
 
 DEPTHS: tuple[int, ...] = (5, 8, 10, 15, 20)
 
@@ -41,6 +45,25 @@ BUBBLE = TournamentContext(
 )
 
 _ACTIONS: dict[str, tuple[str, ...]] = {"SB": ("jam", "fold"), "BB": ("call", "fold")}
+
+# Final-table fixtures (plan-deferred drill kinds, built 2026-07-29). FT3 is
+# pure LADDER pressure — everyone is paid, the money at stake is the jumps —
+# with asymmetric stacks (short SB shoving into the chip leader's BB at 8bb
+# effective). FT5 is the final-table money bubble: 5 left, 3 paid.
+FT3 = TournamentContext(
+    payouts=(500, 300, 200),
+    players_remaining=3,
+    stacks_all=(1200, 1000, 800),
+    bb=100,
+    ante=0,
+)
+FT5 = TournamentContext(
+    payouts=(500, 300, 200),
+    players_remaining=5,
+    stacks_all=(1000, 1000, 1000, 1000, 1000),
+    bb=125,
+    ante=0,
+)
 
 
 @dataclass(frozen=True)
@@ -75,20 +98,47 @@ class Drill:
     # Server-authored sentence for the page when the action set is complete
     # at two (the page renders server words, never its own claims).
     action_note: str = ""
-    # The position whose all-in the hero is facing ("" when hero is first to
-    # act). A formation fact the scene renders — "SB is all-in for 10bb" —
+    # The position whose aggression the hero is facing ("" when hero is first
+    # to act). A formation fact the scene renders — "SB is all-in for 10bb" —
     # and the RTA framing depends on.
     versus: str = ""
+    # WHAT that position did: "all-in" or a raise label ("raise 2.2bb").
+    # Empty iff `versus` is empty. The scene draws the difference (all-in
+    # badge + full stack pushed vs a raise badge + the raise amount).
+    versus_action: str = ""
     # Seat list in action order when seat attribution is a formation fact
     # (HU + 9-max ring). Empty for ICM multiway, whose payload deliberately
     # does not attribute stacks to seats.
     table: tuple[str, ...] = ()
+    # Grading tier (types.TIER_*). Chart drills are tier 1; postflop drills
+    # graded by the subgame solver are tier 2 — the page shows the tier's
+    # honest label, so it must be a Drill fact, not a page guess.
+    tier: int = TIER_CHART
+    # Community cards as concrete strings ("As", ...) for postflop drills;
+    # empty preflop. When the board is real, the hero's cards must be too
+    # (suits ARE the strategy on a board), hence hero_cards; preflop drills
+    # keep the 169-class label and synthetic display suits.
+    board: tuple[str, ...] = ()
+    hero_cards: tuple[str, ...] = ()
 
 
 # SB open distractors: plausible at the table, unpriced by the jam/fold chart.
 _OFF_TREE_SB = ("limp", "raise 2.2bb", "raise 3bb")
 _BB_NOTE = ("Facing an all-in, raise does not exist: the only actions are "
             "call and fold.")
+# Open-game notes. Limp is the ONE table action the open game still cannot
+# price (a limped pot reaches postflop), so it stays a distractor there; a
+# flat-call of a raise is unpriced for the same reason on resteal spots.
+_OPEN_NOTE = ("Raises here are priced by the open-game chart. Limping is not "
+              "— a limped pot plays postflop, which this chart does not "
+              "model.")
+_RESTEAL_NOTE = ("Flat-calling the raise leads to postflop play this chart "
+                 "does not price; the solved framework is re-jam or fold.")
+# A raise must actually OCCUR at equilibrium for the defend-vs-raise node to
+# be solved: an unreached CFR infoset carries an arbitrary strategy, and
+# serving drills from it would grade the user against noise. One combo is the
+# floor for "this raise is a real part of the solution".
+_MIN_RAISE_COMBOS = 1.0
 
 
 def _describe(pos: str, depth: float, hand: str, kind: str,
@@ -104,12 +154,20 @@ def _describe(pos: str, depth: float, hand: str, kind: str,
     # real options would identify them. The BB prompt keeps "call or fold?" —
     # facing an all-in that pair is poker-complete, which is also why BB spots
     # carry no distractors.
+    # The HU drills name their table ("heads-up") now that a 9-max SB
+    # formation exists — "SB 10bb" alone no longer says which chart answers.
+    # The ICM prompts keep their own table context (the bracket prefix).
+    hu = ", heads-up" if kind == "jamfold" else ""
     if pos == "SB":
-        base = f"SB {d}bb{ante}, {hand}: your action?"
+        base = f"SB {d}bb{ante}{hu}, {hand}: your action?"
     else:
-        base = f"BB {d}bb{ante} facing an SB all-in, {hand}: call or fold?"
+        base = f"BB {d}bb{ante}{hu} facing an SB all-in, {hand}: call or fold?"
     if kind == "icm" and tc is not None:
-        base = (f"[Bubble ICM · {tc.players_remaining} left, "
+        # derived from the ladder, not from a label: fewer paid than left is
+        # a bubble; everyone paid is final-table ladder pressure
+        tag = ("Bubble ICM" if len(tc.payouts) < tc.players_remaining
+               else "Final-table ICM")
+        base = (f"[{tag} · {tc.players_remaining} left, "
                 f"{len(tc.payouts)} paid] " + base)
     return base
 
@@ -140,6 +198,7 @@ def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
                         off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
                         action_note="" if pos == "SB" else _BB_NOTE,
                         versus="" if pos == "SB" else "SB",
+                        versus_action="" if pos == "SB" else "all-in",
                         table=("SB", "BB"),
                     ))
     return out
@@ -186,7 +245,8 @@ def ring_drills() -> list[Drill]:
                                          f"{jammer} all-in (9-max), {hand}: "
                                          f"call or fold?"),
                             action_note=_BB_NOTE,
-                            versus=jammer, table=RING_ORDER,
+                            versus=jammer, versus_action="all-in",
+                            table=RING_ORDER,
                         ))
     return out
 
@@ -246,8 +306,13 @@ def _icm_solutions(tc: TournamentContext, sb_seat: int, bb_seat: int
 
 
 def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
-               bb_seat: int = 1) -> list[Drill]:
-    """Bubble ICM push/fold drills from a fixture TournamentContext."""
+               bb_seat: int = 1, label: str = "") -> list[Drill]:
+    """ICM push/fold drills from a fixture TournamentContext.
+
+    `label` namespaces the categories (`.icm.ft3`) so fixtures never share an
+    answer key; the empty label is the original bubble fixture, whose keys
+    must stay byte-identical.
+    """
     sb_sol, bb_sol, depth = _icm_solutions(tournament, sb_seat, bb_seat)
     pot = 2.0 * depth
     out: list[Drill] = []
@@ -261,7 +326,8 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
     total_bb = sum(tournament.stacks_all) / float(tournament.bb)
     bb_value = (float(sum(tournament.payouts)) / total_bb) if total_bb else 1.0
     for pos, sols in (("SB", sb_sol), ("BB", bb_sol)):
-        leak_key = jamfold_category(pos, depth, icm=True, ante_bb=icm_ante)
+        leak_key = jamfold_category(pos, depth, icm=True,
+                                    ante_bb=icm_ante, icm_label=label)
         for hand in hands.HAND_CLASSES:
             out.append(Drill(
                 drill_id=f"{leak_key}:{hand}", kind="icm", position=pos,
@@ -272,19 +338,107 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
                 off_tree_actions=_OFF_TREE_SB if pos == "SB" else (),
                 action_note="" if pos == "SB" else _BB_NOTE,
                 versus="" if pos == "SB" else "SB",
+                versus_action="" if pos == "SB" else "all-in",
                 # table deliberately stays empty: the ICM payload does not
                 # attribute stacks to seats, so the scene keeps them anonymous
             ))
     return out
 
 
+def open_drills() -> list[Drill]:
+    """First-in OPEN drills: fold / raise 2.2bb / raise 3bb / jam, all priced
+    (charts/openraise.py), for every 9-max position plus the HU SB — the
+    answer to "the raise buttons should be real options". Limp remains the
+    one distractor, with the note saying why.
+
+    Also emits the RESTEAL drills that fall out of the same solve: re-jam or
+    fold facing a named raise size, for every responder — but ONLY where that
+    raise actually occurs at equilibrium (raise combo mass ≥ 1): an unreached
+    defend node's CFR strategy is arbitrary, and a drill graded against noise
+    would be a fabricated answer key wearing a real one's clothes.
+    """
+    out: list[Drill] = []
+    for formation, (table, opener) in OPEN_FORMATIONS.items():
+        behind = table[table.index(opener) + 1:]
+        hu = formation == "SBhu"
+        ring_tag = "heads-up" if hu else "9-max"
+        for d in DEPTHS:
+            for ante in ANTES:
+                a = f", {ante:g}bb ante" if ante else ""
+                pot = 2.0 * float(d)
+                sol = open_solution(formation, float(d), ante)
+                ctx = open_ctx(sol, formation)
+                labels = ["jam"] + [f"raise {r:g}bb" for r in sol.sizes] + ["fold"]
+                leak = open_category(formation, float(d), ante_bb=ante)
+                for i, hand in enumerate(hands.HAND_CLASSES):
+                    actions = {lab: (float(sol.open_ev[lab][i]),
+                                     float(sol.open_freq[lab][i]))
+                               for lab in labels}
+                    out.append(Drill(
+                        drill_id=f"{leak}:{hand}", kind="open",
+                        position=opener, depth_bb=float(d), hand_label=hand,
+                        solution=Solution(actions=actions, range_ctx=ctx,
+                                          source="chart"),
+                        pot_bb=pot, leak_key=leak,
+                        legal_actions=tuple(labels),
+                        description=(f"{opener} {int(d)}bb{a}, {ring_tag} "
+                                     f"first-in, {hand}: your action?"),
+                        off_tree_actions=("limp",), action_note=_OPEN_NOTE,
+                        table=table,
+                    ))
+                for r in sol.sizes:
+                    rlab = f"raise {r:g}bb"
+                    mass = float(sum(
+                        f * hands.combos(h) for f, h in
+                        zip(sol.open_freq[rlab], hands.HAND_CLASSES)))
+                    if mass < _MIN_RAISE_COMBOS:
+                        continue
+                    for q in behind:
+                        y = sol.defend_freq[(q, rlab)]
+                        ev = sol.defend_ev[(q, rlab)]
+                        fev = sol.defend_fold_ev[(q, rlab)]
+                        leakd = resteal_category(q, formation, float(r),
+                                                 float(d), ante_bb=ante)
+                        for i, hand in enumerate(hands.HAND_CLASSES):
+                            actions = {
+                                "jam": (float(ev[i]), float(y[i])),
+                                "fold": (float(fev), 1.0 - float(y[i]))}
+                            out.append(Drill(
+                                drill_id=f"{leakd}:{hand}", kind="resteal",
+                                position=q, depth_bb=float(d),
+                                hand_label=hand,
+                                solution=Solution(actions=actions,
+                                                  range_ctx=ctx,
+                                                  source="chart"),
+                                pot_bb=pot, leak_key=leakd,
+                                legal_actions=("jam", "fold"),
+                                description=(
+                                    f"{q} {int(d)}bb{a} facing a {opener} "
+                                    f"raise to {r:g}bb ({ring_tag}), {hand}: "
+                                    f"your action?"),
+                                off_tree_actions=("call",),
+                                action_note=_RESTEAL_NOTE,
+                                versus=opener, versus_action=rlab,
+                                table=table,
+                            ))
+    return out
+
+
 def default_population() -> list[Drill]:
     """The full drill population served by the web app: HU jam/fold + ICM
-    bubble + 9-max ring. One function on purpose — the app-wide honesty pins
-    (every kind has an EV unit, every source a verb, the scheduler budget
-    counts every category) sweep THIS list, so a population source that
-    lived outside it would silently escape them."""
-    return jamfold_drills() + icm_drills() + ring_drills()
+    bubble + 9-max ring + the open game (priced raises) + resteals. One
+    function on purpose — the app-wide honesty pins (every kind has an EV
+    unit, every source a verb, the scheduler budget counts every category)
+    sweep THIS list, so a population source that lived outside it would
+    silently escape them."""
+    # imported here, not at module top: river.py imports Drill from THIS
+    # module, so a top-level import would be circular
+    from pokerlab.drills.river import river_drills
+
+    return (jamfold_drills() + icm_drills()
+            + icm_drills(FT3, sb_seat=2, bb_seat=0, label="ft3")
+            + icm_drills(FT5, sb_seat=0, bb_seat=1, label="ft5")
+            + ring_drills() + open_drills() + river_drills())
 
 
 def sample_drills(drills: list[Drill], n: int, seed: int) -> list[Drill]:

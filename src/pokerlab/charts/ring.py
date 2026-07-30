@@ -51,10 +51,14 @@ RING_ORDER: tuple[str, ...] = (
     "UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB")
 BLINDS: dict[str, float] = {"SB": 0.5, "BB": 1.0}
 
-# Positions the drill grid solves as first-in jammers. SB is deliberately
-# absent: the folded-to-SB spot is the existing HU `SBjam` chart (see the
-# modeling-seam note in the module docstring).
-RING_JAMMERS: tuple[str, ...] = ("UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN")
+# Positions the drill grid solves as first-in jammers. SB is here TOO, under
+# its own `.9max`-keyed formation: folded-to-SB at nine dealt players prices
+# seven extra antes of dead money the HU `SBjam` chart never modeled — the
+# seam the module docstring documents, closed on the drill side. (The HH
+# grader still keys real SB hands to the HU chart; re-keying it needs a
+# measured table-size bucket design, not a silent swap.)
+RING_JAMMERS: tuple[str, ...] = ("UTG", "UTG1", "UTG2", "LJ", "HJ", "CO",
+                                 "BTN", "SB")
 
 DATA_PATH = Path(__file__).resolve().parent / "data" / "ring_charts.npz"
 
