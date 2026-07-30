@@ -77,10 +77,17 @@ def _depth_token(eff_bb: float, ante_bb: float) -> str:
 
 
 def jamfold_category(position: str, eff_bb: float, *, icm: bool = False,
-                     ante_bb: float = 0.0) -> str:
-    """Canonical category for a ≤20bb push/fold spot (SB jam / BB call)."""
+                     ante_bb: float = 0.0, icm_label: str = "") -> str:
+    """Canonical category for a ≤20bb push/fold spot (SB jam / BB call).
+
+    `icm_label` names WHICH tournament fixture an ICM chart was solved for
+    (`.icm.ft3`): two fixtures at the same depth are different answer keys.
+    The empty label keeps the original bubble fixture's keys byte-identical
+    (the ante=0 orphan rule, applied to a third axis).
+    """
     pos = position.upper()
-    formation = _JAMFOLD_FORMATION[pos] + (".icm" if icm else "")
+    suffix = (".icm" + (f".{icm_label}" if icm_label else "")) if icm else ""
+    formation = _JAMFOLD_FORMATION[pos] + suffix
     token = _depth_token(eff_bb, ante_bb)
     return f"{formation}|preflop|{_JAMFOLD_ACTION[pos]}|{token}"
 
@@ -93,12 +100,37 @@ def ring_category(position: str, eff_bb: float, *, versus: str | None = None,
     a defender names the jam it faces (`BBcall.vUTG|preflop|call|10`) because
     defending vs UTG and vs BTN are different skills with different answer
     keys — one formation token per chart, same rule as `.icm`.
+
+    The SB jammer alone carries a `.9max` suffix: bare `SBjam` is the HU
+    chart's key, and folded-to-SB at nine dealt players prices seven extra
+    antes of dead money — a different answer key, so a different formation
+    token. Existing HU keys stay byte-identical (the ante=0 orphan rule).
     """
     pos = position.upper()
     token = _depth_token(eff_bb, ante_bb)
     if versus is None:
-        return f"{pos}jam|preflop|jam|{token}"
+        tag = ".9max" if pos == "SB" else ""
+        return f"{pos}jam{tag}|preflop|jam|{token}"
     return f"{pos}call.v{versus.upper()}|preflop|call|{token}"
+
+
+def open_category(formation: str, eff_bb: float, *, ante_bb: float = 0.0) -> str:
+    """Canonical category for a first-in OPEN decision (fold/raise/jam all
+    priced — charts/openraise.py). `formation` is an OPEN_FORMATIONS key:
+    a 9-max position, or "SBhu" for the heads-up table."""
+    return f"{formation}open|preflop|open|{_depth_token(eff_bb, ante_bb)}"
+
+
+def resteal_category(position: str, formation: str, size_bb: float,
+                     eff_bb: float, *, ante_bb: float = 0.0) -> str:
+    """Canonical category for defending vs a first-in raise by re-jamming.
+
+    The raise SIZE is part of the formation token: re-jamming over 2.2bb and
+    over 3bb are different priced games (different dead money, different
+    opener continuing ranges), so they must never share an answer key.
+    """
+    return (f"{position.upper()}resteal.v{formation}.r{size_bb:g}"
+            f"|preflop|jam|{_depth_token(eff_bb, ante_bb)}")
 
 
 def postflop_category(formation: str, street: str, action_type: str) -> str:
