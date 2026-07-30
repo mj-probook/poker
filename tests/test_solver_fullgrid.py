@@ -36,10 +36,17 @@ def test_default_grid_builds_at_flops25_geometry():
     assert tree is not None
 
 
-@pytest.mark.slow  # a single full-grid FLOP iteration is ~30s — not fast-suite
-def test_flops25_fixture_solver_builds_and_solves_a_little():
+@pytest.mark.slow  # ~15s: 1 CFR iter + exploitability on the full-grid tree
+def test_default_grid_values_flow_end_to_end_at_turn_scale():
+    """Values flow through DEFAULT-GRID multi-size bet nodes + a chance node,
+    with the fixture ranges. Deliberately TURN scale: the same smoke at flop
+    scale was measured at >10 minutes for one iteration + one measurement
+    (thousands of runout showdown contexts) — that run belongs to the
+    nightly batch drain, not to any test tier."""
     from pokerlab.solver import flops25
-    entry = flops25.load_flops25()["flops"][0]
-    solver = flops25.build_solver(entry)
-    solver.iterate(1)                     # smoke: values flow end to end
+    oop, ip = flops25.range_vectors()
+    board = _cards("2c3c4c8d")
+    tree = sg.build_tree(board, pot0=5.0, stack=37.5, cfg=sg.BetConfig())
+    solver = sg.SubgameSolver(tree, board, oop, ip, pot0=5.0)
+    solver.iterate(1)
     assert solver.exploitability() >= 0.0
