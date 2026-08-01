@@ -132,8 +132,9 @@ def test_the_tier_claim_on_every_drill_is_warranted_by_its_solution():
     the (source, tier) pairing is pinned per drill, exhaustively. A source
     outside this table must fail HERE, not inherit either label.
     """
-    from pokerlab.types import TIER_CHART, TIER_SOLVER
-    warranted_tier = {"chart": TIER_CHART, "subgame_solver": TIER_SOLVER}
+    from pokerlab.types import TIER_BEST_AVAILABLE, TIER_CHART, TIER_SOLVER
+    warranted_tier = {"chart": TIER_CHART, "subgame_solver": TIER_SOLVER,
+                      "population": TIER_BEST_AVAILABLE}
     for d in gen.default_population():
         assert d.solution.source in warranted_tier, (
             f"{d.drill_id}: source {d.solution.source!r} has no pinned tier "

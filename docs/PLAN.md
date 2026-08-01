@@ -1,5 +1,7 @@
 # Build Plan: Personal Poker Lab — Learn Game Theory + RL, Train for a WSOP Bracelet
 
+> **Rev 3.4 — 2026-08-01 (post-ship build-out reconciliation).** The 2026-07-29/08-01 autonomous build waves closed four §5.1 deferral rows (resteal, ante-adjusted full-ring open/defend — now with a full 2–9-player table-size axis, final-table ladders, postflop tier-2 river drills), shipped the §M2 range grid (its recorded trigger — range-shaped drill answers — arrived with the open game), added tier-3 MULTIWAY drills consuming the §5.2 population table as their grading baseline (frequency flags only, the §5.3 hard rule), and made `drill_attempts.correct` nullable (tier 3 makes no right/wrong claim — the ev_loss NULL rule extended to accuracy). Rows below updated in place with *built (rev 3.4)* markers; per-slice records in the impl doc. Scope and rationale unchanged.
+>
 > **Rev 3.3 — 2026-07-20 (R4 plan-vs-built audit reconciliation).** The round-4 fresh-eyes audit inventoried 51 plan promises against the build (32 delivered, 6 recorded deviations, 5 recorded deferrals, 8 unrecorded gaps) and this rev records the document's share of those gaps where the build is right and the text was stale or silent: §3 storage lists the two build-added tables (`failed_hands`, `batch_queue`); §3b #2 records the two unbuilt Solution adapters as deferred; §5.2 gets the same as-built honesty table §5.1 got in rev 3.2; §8 M0 records the odd-chip carve-out, M1.5 the measured exploitability + tightened CI bar, M3 the accepted TexasSolver-bars deferral (correcting a "never silently passed" phrasing that promised an assertion deliberately deferred in round 1), M4 the overnight-equals-user-cron deployment note. Code-side R4 findings (tier-2 provenance threading, session-partial scoping, provenance label map, saturation pin) landed as fixes, not plan edits. Scope and rationale unchanged.
 >
 > **Rev 3.1 — 2026-07-19 (as-built reconciliation).** Implementation review round 2 found that three round-1 findings' plan-restatement halves never landed. This rev restates the M1.5/M3/M4/M5 exit rows (§8) to what the built test suite actually asserts, records the numpy-for-Rust deviation (§3, §8), and adds the depth bucket to the leak-taxonomy key (§5.3). Scope and rationale unchanged.
@@ -68,7 +70,7 @@
 
 **Storage (pinned in round 2):** **SQLite** for app state — tables `imported_hands`, `gradings`, `drill_attempts`, `sr_state` (SM-2/Leitner), `solution_index`. Solve outputs live on disk (one file per solve, keyed by SpotKey) with the index in SQLite. **Derived metrics are queries, not tables** — leak rankings, EV-loss trends, and skill-gate stats are computed views over `gradings`/`drill_attempts`; nothing speculative is persisted. *As built (rev 3.3): two more tables ship, each backing a behaviour this plan promises — `failed_hands` (§8 M4's isolation) and `batch_queue` (§5.3's overnight batch). Both trace to concrete promised behaviour; neither is speculative persistence.*
 
-**UI (pinned for M2):** local web view (table + range grid rendering beat a TUI for drills); functional only, no animation polish. The UI↔drill-engine contract is one loop: `next_spot() → Spot`, `submit_action(action) → Score` (per the §1 decision-ε rule). *As built (rev 3.2): the table view, drill loop, feedback (incl. ICM-$ units and prize ladder), and leak report shipped; the range grid is deferred to the post-review backlog — current drills are single-decision spots where the grid adds no answer-relevant information, and it becomes worth building alongside the deferred resteal/postflop drills whose answers are range-shaped. A deferral, not an oversight.*
+**UI (pinned for M2):** local web view (table + range grid rendering beat a TUI for drills); functional only, no animation polish. The UI↔drill-engine contract is one loop: `next_spot() → Spot`, `submit_action(action) → Score` (per the §1 decision-ε rule). *As built (rev 3.2): the table view, drill loop, feedback (incl. ICM-$ units and prize ladder), and leak report shipped; the range grid is deferred to the post-review backlog — current drills are single-decision spots where the grid adds no answer-relevant information, and it becomes worth building alongside the deferred resteal/postflop drills whose answers are range-shaped. A deferral, not an oversight.* *Built (rev 3.4): `/api/drill/range` serves the 13×13 grid straight from the population's own Solution objects (no second source to drift), revealed after answering.*
 
 ### 3b. Contracts to pin before implementation (the parallelization surface)
 
@@ -104,10 +106,10 @@ Push/fold Nash (**≤20bb**, drilled across 5–20bb × positions), resteal, bub
 |---|---|
 | Push/fold 5–20bb × SB/BB (ante-bucketed per §5.3) | **built** |
 | Bubble ICM (4-player fixture set) | **built** |
-| Resteal drills | deferred — no code, no answer-key path yet |
-| Ante-adjusted full-ring open/defend ranges | deferred |
-| Final-table / pay-jump ladder variation | deferred (single bubble ladder shipped) |
-| Postflop tier-2 drills from own solves | deferred — solves exist, no drill kind consumes them |
+| Resteal drills | **built (rev 3.4)** — re-jam/fold vs the priced open, only where the raise occurs at equilibrium |
+| Ante-adjusted full-ring open/defend ranges | **built (rev 3.4)** — ring + open chain charts, full depth×ante grid, table sizes 2–9 |
+| Final-table / pay-jump ladder variation | **built (rev 3.4)** — FT3/FT5 fixtures (`.icm.ft3`/`.icm.ft5`), bubble keys byte-identical |
+| Postflop tier-2 drills from own solves | **built (rev 3.4)** — river drills from certified in-house solves (16 boards, gap ≤ 0.01bb, re-certified each run); flop/turn stay deferred behind the batch drain (a half-converged flop key would be fabricated) |
 | Population-heuristic tier-3 flags as training signal | wired in wave 3 (flags persisted + reported) |
 Deferrals are scope calls, not oversights — recorded here so the syllabus can be extended deliberately.
 
@@ -121,7 +123,7 @@ Full-ring single-raised and 3-bet pots, drilled from my own TexasSolver/M3 solve
 | Population table, versioned config | shipped — `population/default.toml`, own observations only |
 | Table schema | **deviates:** normalized action-type distributions (check/bet/call/fold/raise) keyed `formation\|street` — what tier-3 frequency-deviation flagging consumes — not the named VPIP/PFR/3-bet/c-bet/fold-vs-c-bet stats; documented in-file |
 | Consumed by tier-3 grading | shipped (the §5.1 table's "wired wave 3" row) |
-| Consumed by drill generator as range priors | **deferred** — lands with the postflop tier-2 drills (§5.1 deferral), which are what would consume priors |
+| Consumed by drill generator as range priors | **partially built (rev 3.4):** tier-3 multiway drills consume the table as their GRADING baseline (frequency flags, the §5.3 contract). Consumption as villain RANGE priors remains deferred — the table stores action-type distributions, not ranges (the schema deviation above), so there are no ranges in it to consume |
 | Consumed by §6 bots as target frequencies | **deferred** — §6 bots ship with free knobs; table-derived targets land if/when population-styled bots are built |
 | Postflop drills from these solves | deferred (recorded in §5.1) |
 

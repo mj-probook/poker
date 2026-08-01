@@ -267,6 +267,34 @@
     #actions button[data-action="fold"] {
       background: radial-gradient(120% 160% at 50% 0%, #ffffff20, transparent 50%), #3a3a38; }
     #actions button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+    /* tier-3 advisory block: study numbers under their caveat, never grades */
+    #advisory { margin-top: .55rem; padding: .6rem .8rem; border-radius: .5rem;
+      background: #26221fb5; border: 1px solid #ffffff1c; font-size: .78rem; }
+    #advisory .caveat { color: #d8b25c; font-style: italic; margin: 0 0 .4rem; }
+    #advisory table { border-collapse: collapse; }
+    #advisory td { padding: .1rem .6rem .1rem 0;
+      font-variant-numeric: tabular-nums; }
+    #advisory .eqnote { color: #a89f8e; font-size: .7rem; margin: .35rem 0 0; }
+
+    /* range grid: 13×13, one cell per class, colored by the key's own
+       action frequencies (stacked left-to-right) */
+    .btnrow { display: flex; gap: .6rem; align-items: center; }
+    #range-panel { margin-top: .7rem; }
+    #range-grid { display: grid; grid-template-columns: repeat(13, 1fr);
+      gap: 2px; max-width: 34rem; }
+    #range-grid .rcell { aspect-ratio: 1; display: flex; align-items: center;
+      justify-content: center; font-size: .55rem; letter-spacing: .02em;
+      color: #fff; border-radius: 3px; text-shadow: 0 1px 1px #000c;
+      font-variant-numeric: tabular-nums; }
+    #range-grid .rcell.absent { background: #26221f; color: #ffffff38; }
+    #range-legend { display: flex; gap: .9rem; margin-bottom: .45rem;
+      font-size: .72rem; flex-wrap: wrap; }
+    #range-legend .swatch { display: inline-block; width: .8rem;
+      height: .8rem; border-radius: 3px; margin-right: .3rem;
+      vertical-align: -2px; }
+    #range-ctx { font-size: .7rem; color: #a89f8e; font-style: italic;
+      overflow-wrap: anywhere; }
+
     /* tier-2 disclosure: the server's provenance sentence, small but present */
     #provenance { font-size: .72rem; color: #a89f8e; font-style: italic;
       margin: .1rem 0 0; overflow-wrap: anywhere; }
@@ -278,6 +306,8 @@
       line-height: 1.45; }
     #feedback.correct { color: var(--ok); }
     #feedback.incorrect { color: var(--bad); }
+    /* tier-3: no right/wrong exists — neutral ink, no verdict color */
+    #feedback.neutral { color: var(--ivory); }
     #next { font: inherit; font-size: .88rem; letter-spacing: .1em; text-transform: uppercase;
       color: var(--gold); background: transparent; border: 1.5px solid var(--gold);
       border-radius: 999px; padding: .5rem 1.6rem; cursor: pointer; margin-top: .6rem; }
@@ -330,15 +360,29 @@
             <option value="all">everything</option>
             <option value="hu">HU push/fold</option>
             <option value="icm">ICM bubble</option>
-            <option value="ring-jam">9-max first-in (jam/fold)</option>
-            <option value="ring-defend">9-max defend vs jam</option>
+            <option value="ring-jam">ring first-in (jam/fold, 3–9 players)</option>
+            <option value="ring-defend">ring defend vs jam (3–9 players)</option>
             <option value="open">first-in open (raises priced)</option>
             <option value="resteal">resteal vs raise</option>
             <option value="river">river (solver-graded)</option>
+            <option value="multiway">multiway (tier 3 — advisory)</option>
           </select>
         </label>
         <label>position
           <select id="pos"><option value="all">any</option></select>
+        </label>
+        <label>players
+          <select id="players">
+            <option value="all">any</option>
+            <option value="2">2 (heads-up)</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9 (full ring)</option>
+          </select>
         </label>
       </div>
       <p id="description">Loading…</p>
@@ -347,7 +391,17 @@
       <div id="actions"></div>
       <p id="action-note"></p>
       <p id="feedback"></p>
-      <button id="next">Deal next spot</button>
+      <div id="advisory" hidden></div>
+      <div class="btnrow">
+        <button id="next">Deal next spot</button>
+        <button id="range-btn" disabled
+                title="The full 13×13 range this answer key plays — revealed after you answer">show range</button>
+      </div>
+      <div id="range-panel" hidden>
+        <div id="range-legend"></div>
+        <div id="range-grid"></div>
+        <p id="range-ctx"></p>
+      </div>
     </div>
   </div>
   <script src="/static/app.js"></script>

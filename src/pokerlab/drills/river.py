@@ -128,7 +128,16 @@ def _ctx(board: str, gap: float) -> str:
             f":measured_gap={gap:.4f}bb")
 
 
+@lru_cache(maxsize=1)
+def _river_drills_cached() -> tuple[Drill, ...]:
+    return tuple(_build_river_drills())
+
+
 def river_drills() -> list[Drill]:
+    return list(_river_drills_cached())
+
+
+def _build_river_drills() -> list[Drill]:
     """OOP (BB) root river decisions, one drill per hand class per board."""
     textures = dict(river_boards())
     out: list[Drill] = []

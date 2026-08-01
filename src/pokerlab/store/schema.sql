@@ -107,7 +107,12 @@ CREATE TABLE IF NOT EXISTS drill_attempts(
   leak_key TEXT NOT NULL,
   kind TEXT NOT NULL,
   chosen TEXT NOT NULL,
-  correct INTEGER NOT NULL,
+  -- NULL iff the drill is tier 3 (multiway): no right/wrong claim EXISTS
+  -- there — grading is the population-frequency contract, and persisting a
+  -- fabricated 0/1 would smuggle an accuracy claim the tier bans (the
+  -- ev_loss NULL-means-unpriced rule, extended to correctness itself).
+  -- Accuracy views must skip NULLs; SQLite aggregates already do.
+  correct INTEGER,
   -- NULL iff the attempt chose an OFF-TREE action (limp / raise-size on a
   -- jam/fold drill): the chart never priced that action, so no EV number
   -- exists — the same NULL-means-unpriced rule gradings.ev_loss uses for

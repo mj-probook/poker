@@ -62,6 +62,20 @@ RING_JAMMERS: tuple[str, ...] = ("UTG", "UTG1", "UTG2", "LJ", "HJ", "CO",
 
 DATA_PATH = Path(__file__).resolve().parent / "data" / "ring_charts.npz"
 
+# Table sizes the drill grid ships (players dealt in). Every size is the
+# button-anchored SUFFIX of the 9-max order: position names keep their 9-max
+# labels (6-max first-in is "LJ") because distance-to-button is the strategic
+# fact, and every range_ctx states the actual size (`ring6`). 2 is the HU
+# table (the jamfold module's game); 9 is the classic full ring.
+TABLE_SIZES: tuple[int, ...] = (2, 3, 4, 5, 6, 7, 8, 9)
+
+
+def table_for_size(n: int) -> tuple[str, ...]:
+    """Button-anchored suffix of RING_ORDER for an n-handed table."""
+    if n not in TABLE_SIZES:
+        raise ValueError(f"table size {n} not in {TABLE_SIZES}")
+    return RING_ORDER[len(RING_ORDER) - n:]
+
 
 @dataclass(frozen=True)
 class RingSolution:
@@ -251,8 +265,20 @@ def solve_ring(jammer: str, depth_bb: float, ante: float = 0.0,
 # re-certifies every stored formation's Nash gap from scratch on every run,
 # so the artifact can never silently rot into a black box.
 # --------------------------------------------------------------------------- #
-def cache_key(jammer: str, depth_bb: float, ante: float) -> str:
-    return f"{jammer}|{depth_bb:g}|{ante:g}"
+def cache_key(jammer: str, depth_bb: float, ante: float,
+              table_size: int = 9) -> str:
+    """9-max keys stay byte-identical (orphan rule); short tables carry a
+    `.{n}max` suffix on the jammer token, mirroring the category tokens."""
+    tag = "" if table_size == 9 else f".{table_size}max"
+    return f"{jammer}{tag}|{depth_bb:g}|{ante:g}"
+
+
+def _parse_jammer_token(token: str) -> tuple[str, int]:
+    """"CO" -> ("CO", 9); "CO.6max" -> ("CO", 6)."""
+    if "." in token:
+        jammer, tag = token.split(".", 1)
+        return jammer, int(tag.removesuffix("max"))
+    return token, 9
 
 
 @lru_cache(maxsize=1)
@@ -266,14 +292,15 @@ def load_ring_charts(path: str | None = None) -> dict[str, RingSolution]:
     with np.load(p) as d:
         keys = sorted({name.split("/")[0] for name in d.files})
         for key in keys:
-            jammer = key.split("|")[0]
-            behind = RING_ORDER[RING_ORDER.index(jammer) + 1:]
+            jammer, size = _parse_jammer_token(key.split("|")[0])
+            table = table_for_size(size)
+            behind = table[table.index(jammer) + 1:]
             depth, ante, jam_fold_ev, expl = (float(v) for v in d[f"{key}/meta"])
             calls_a = d[f"{key}/calls"]
             call_ev_a = d[f"{key}/call_ev"]
             call_fold_a = d[f"{key}/call_fold"]
             out[key] = RingSolution(
-                table=RING_ORDER, jammer=jammer, depth_bb=depth, ante=ante,
+                table=table, jammer=jammer, depth_bb=depth, ante=ante,
                 jam=d[f"{key}/jam"], jam_ev=d[f"{key}/jam_ev"],
                 jam_fold_ev=jam_fold_ev,
                 calls={q: calls_a[i] for i, q in enumerate(behind)},
@@ -285,13 +312,15 @@ def load_ring_charts(path: str | None = None) -> dict[str, RingSolution]:
     return out
 
 
-def ring_solution(jammer: str, depth_bb: float, ante: float = 0.0
-                  ) -> RingSolution:
+def ring_solution(jammer: str, depth_bb: float, ante: float = 0.0,
+                  table_size: int = 9) -> RingSolution:
     """A formation's solve: from the checked-in artifact when present (the
     entire drill grid is), a live `solve_ring` otherwise — same solver, same
     iteration budget, so the two paths agree (pinned by the slow cache test)."""
-    cached = load_ring_charts().get(cache_key(jammer, depth_bb, ante))
-    return cached if cached is not None else solve_ring(jammer, depth_bb, ante)
+    cached = load_ring_charts().get(
+        cache_key(jammer, depth_bb, ante, table_size))
+    return cached if cached is not None else solve_ring(
+        jammer, depth_bb, ante, table=table_for_size(table_size))
 
 
 # --------------------------------------------------------------------------- #
@@ -305,12 +334,12 @@ def _ctx(sol: RingSolution) -> str:
             f"single-caller|pairwise-removal|stacks-symmetric")
 
 
-def ring_range(jammer: str, depth_bb: float, ante: float = 0.0
-               ) -> dict[str, "Solution"]:
+def ring_range(jammer: str, depth_bb: float, ante: float = 0.0,
+               table_size: int = 9) -> dict[str, "Solution"]:
     """{hand_label: Solution} for the first-in jammer's jam/fold decision."""
     from pokerlab.types import Solution
 
-    sol = ring_solution(jammer, depth_bb, ante)
+    sol = ring_solution(jammer, depth_bb, ante, table_size)
     ctx = _ctx(sol)
     return {
         label: Solution(
@@ -323,12 +352,13 @@ def ring_range(jammer: str, depth_bb: float, ante: float = 0.0
 
 
 def ring_defense_range(position: str, *, versus: str, depth_bb: float,
-                       ante: float = 0.0) -> dict[str, "Solution"]:
+                       ante: float = 0.0,
+                       table_size: int = 9) -> dict[str, "Solution"]:
     """{hand_label: Solution} for `position` defending call/fold against a
     first-in jam from `versus`."""
     from pokerlab.types import Solution
 
-    sol = ring_solution(versus, depth_bb, ante)
+    sol = ring_solution(versus, depth_bb, ante, table_size)
     if position not in sol.calls:
         raise ValueError(
             f"{position!r} is not behind a first-in {versus!r} jam — "

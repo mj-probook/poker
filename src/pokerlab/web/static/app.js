@@ -21,8 +21,8 @@ let lastAnswer = null; // the full answer payload; renderRta reads its .rta
 // all-in. Off-tree distractors interleave with the priced actions and are
 // styled identically — a visual tell would give the answer away. Unknown
 // labels sort last rather than first.
-const ACTION_ORDER = ["fold", "check", "limp", "call", "bet 33%", "bet 75%",
-                      "raise 2.2bb", "raise 3bb", "jam"];
+const ACTION_ORDER = ["fold", "check", "limp", "call", "bet", "bet 33%",
+                      "bet 75%", "raise 2.2bb", "raise 3bb", "jam"];
 const orderKey = (a) => {
   const i = ACTION_ORDER.indexOf(a);
   return i === -1 ? ACTION_ORDER.length : i;
@@ -103,6 +103,7 @@ const MODE_POS = {
   "open": ["UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB"],
   "resteal": ["UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
   "river": ["BB"],
+  "multiway": ["BB"],
 };
 const modeSel = document.getElementById("mode");
 const posSel = document.getElementById("pos");
@@ -140,9 +141,20 @@ posSel.addEventListener("change", () => {
   loadNext();
 });
 
+// players filter: how many are dealt in. The server owns which counts exist
+// per mode and answers an impossible combination with a loud 400 (shown via
+// showError) — the option list here is an affordance, not the vocabulary.
+const playersSel = document.getElementById("players");
+playersSel.value = localStorage.getItem("players") || "all";
+playersSel.addEventListener("change", () => {
+  localStorage.setItem("players", playersSel.value);
+  loadNext();
+});
+
 async function loadNext() {
   const pos = posSel.disabled ? "all" : posSel.value || "all";
-  const res = await fetch(`${API_NEXT}?mode=${modeSel.value}&pos=${pos}`);
+  const res = await fetch(
+    `${API_NEXT}?mode=${modeSel.value}&pos=${pos}&players=${playersSel.value}`);
   if (!res.ok) {
     showError(`could not load the next drill: ${await errorText(res)}`);
     return;
@@ -234,7 +246,9 @@ function render(spot) {
   // spot chips: server-authored labels only
   const meta = document.getElementById("meta");
   meta.innerHTML = "";
-  [spot.tier_label, `EV in ${spot.ev_unit}`, spot.kind].forEach((label) => {
+  const chips = [spot.tier_label, spot.kind];
+  if (spot.ev_unit) chips.splice(1, 0, `EV in ${spot.ev_unit}`);
+  chips.forEach((label) => {
     const chip = document.createElement("span");
     chip.className = "infochip";
     chip.textContent = label;
@@ -377,8 +391,75 @@ function render(spot) {
   document.getElementById("feedback").textContent = "";
   document.getElementById("feedback").className = "";
   lastAnswer = null;
+  rangeBtn.disabled = true;      // grid holds this hand's row — answer first
+  rangePanel.hidden = true;
+  renderAdvisory(null);
   renderRta();
 }
+
+// ---- range grid: the key's own 13×13 range, revealed after answering ----
+// Colors are per-ACTION so the same legend reads across kinds; frequencies
+// stack left-to-right in each cell (the classic range-viewer encoding).
+const ACTION_COLORS = {
+  "jam": "#b03a30", "call": "#2e7d52", "check": "#33567f",
+  "raise 2.2bb": "#d8b25c", "raise 3bb": "#b8862d",
+  "bet 33%": "#d8b25c", "bet 75%": "#b8862d", "fold": "#54504a",
+};
+const rangeBtn = document.getElementById("range-btn");
+const rangePanel = document.getElementById("range-panel");
+
+async function showRange() {
+  if (!lastAnswer) return;   // revealed AFTER the answer, never before —
+                             // the grid contains this hand's row
+  const res = await fetch(
+    `/api/drill/range?drill_id=${encodeURIComponent(current.drill_id)}`);
+  if (!res.ok) {
+    showError(`could not load the range: ${await errorText(res)}`);
+    return;
+  }
+  const body = await res.json();
+  const legend = document.getElementById("range-legend");
+  legend.innerHTML = "";
+  body.actions.forEach((a) => {
+    const item = document.createElement("span");
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = ACTION_COLORS[a] || "#888";
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(a));
+    legend.appendChild(item);
+  });
+  const gridEl = document.getElementById("range-grid");
+  gridEl.innerHTML = "";
+  body.grid.forEach((row) => row.forEach((cell) => {
+    const div = document.createElement("div");
+    div.className = "rcell" + (cell.freq === null ? " absent" : "");
+    div.textContent = cell.label;
+    if (cell.freq !== null) {
+      // stacked gradient in the SERVER's action order; title states the
+      // exact numbers so the color is never the only carrier
+      const stops = [];
+      let at = 0;
+      body.actions.forEach((a) => {
+        const f = cell.freq[a] || 0;
+        const color = ACTION_COLORS[a] || "#888";
+        stops.push(`${color} ${at * 100}%`, `${color} ${(at + f) * 100}%`);
+        at += f;
+      });
+      div.style.background = `linear-gradient(to right, ${stops.join(", ")})`;
+      div.title = body.actions
+        .map((a) => `${a}: ${Math.round((cell.freq[a] || 0) * 100)}%`)
+        .join("  ");
+    } else {
+      div.title = "not in this key's range here";
+    }
+    gridEl.appendChild(div);
+  }));
+  document.getElementById("range-ctx").textContent =
+    `${body.tier_label} — ${body.range_ctx}`;
+  rangePanel.hidden = false;
+}
+rangeBtn.addEventListener("click", showRange);
 
 async function submitAnswer(action) {
   const res = await fetch(API_ANSWER, {
@@ -392,11 +473,43 @@ async function submitAnswer(action) {
   }
   const score = await res.json();
   const fb = document.getElementById("feedback");
-  fb.textContent = (score.correct ? "✅ " : "❌ ") + score.explanation;
-  fb.className = score.correct ? "correct" : "incorrect";
+  // three states, not two: tier-3 answers carry correct === null — NO
+  // right/wrong claim exists there, so neither mark may render (a ❌ would
+  // be a wrongness claim the tier bans; caught on a live screenshot)
+  const mark = score.correct === null ? "" : score.correct ? "✅ " : "❌ ";
+  fb.textContent = mark + score.explanation;
+  fb.className = score.correct === null ? "neutral"
+               : score.correct ? "correct" : "incorrect";
   if (heroSeatEl) heroSeatEl.className = "seat hero"; // action complete
   lastAnswer = score;
+  rangeBtn.disabled = false;
+  renderAdvisory(score.advisory);
   renderRta();
+}
+
+// Tier-3 advisory block: study numbers rendered UNDER their server-authored
+// caveat, never without it — the caveat is the claim, the numbers are data.
+function renderAdvisory(adv) {
+  const box = document.getElementById("advisory");
+  if (!adv) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  let html = `<p class="caveat">${adv.caveat}</p>`;
+  if (adv.solve) {
+    const rows = Object.entries(adv.solve)
+      .sort((a, b) => b[1] - a[1])
+      .map(([a, ev]) => `<tr><td>${a}</td><td>${ev.toFixed(2)}bb</td></tr>`)
+      .join("");
+    html += `<table>${rows}</table>`;
+    html += `<p class="eqnote">HU-collapsed solve, measured gap ${adv.gap}bb</p>`;
+  }
+  html += `<p>equity vs the field: ` +
+          `${Math.round(adv.equity_vs_field * 100)}%</p>`;
+  html += `<p class="eqnote">${adv.equity_note}</p>`;
+  box.innerHTML = html;
+  box.hidden = false;
 }
 
 document.getElementById("next").addEventListener("click", loadNext);

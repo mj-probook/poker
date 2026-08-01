@@ -25,6 +25,9 @@ def worst_leak_categories(conn: sqlite3.Connection, limit: int = 5,
         "       SUM(1 - correct)        AS errors,"
         "       1.0 - AVG(correct)      AS error_rate"
         "  FROM drill_attempts"
+        # tier-3 attempts carry correct NULL — no right/wrong claim exists,
+        # so they carry no error SIGNAL either and cannot rank a category
+        " WHERE correct IS NOT NULL"
         " GROUP BY leak_key"
         " HAVING COUNT(*) >= ?"
         " ORDER BY error_rate DESC, attempts DESC, leak_key"

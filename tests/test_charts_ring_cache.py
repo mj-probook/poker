@@ -19,8 +19,13 @@ from pokerlab.drills.categories import ANTES, DEPTHS
 
 
 def test_artifact_covers_the_full_drill_grid():
+    """9-max jammers + every 3–8-handed table's non-BB seats (the table-size
+    axis, rev 3.4), × the full depth/ante grid."""
+    from pokerlab.charts.ring import table_for_size
+
     charts = load_ring_charts()
-    assert len(charts) == len(RING_JAMMERS) * len(DEPTHS) * len(ANTES)
+    formations = len(RING_JAMMERS) + sum(n - 1 for n in (3, 4, 5, 6, 7, 8))
+    assert len(charts) == formations * len(DEPTHS) * len(ANTES)
     for jammer in RING_JAMMERS:
         for depth in DEPTHS:
             for ante in ANTES:
@@ -28,6 +33,10 @@ def test_artifact_covers_the_full_drill_grid():
                 assert sol.jammer == jammer
                 behind = RING_ORDER[RING_ORDER.index(jammer) + 1:]
                 assert set(sol.calls) == set(behind)
+    # size spot-check: the 6-max artifact rows carry the 6-max table
+    sol6 = ring_solution("LJ", 10.0, table_size=6)
+    assert sol6.table == table_for_size(6)
+    assert set(sol6.calls) == {"HJ", "CO", "BTN", "SB", "BB"}
 
 
 def test_every_cached_formation_recertifies_from_scratch():

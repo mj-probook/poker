@@ -129,3 +129,15 @@ def test_index_has_the_postflop_slots():
     assert 'id="board"' in html
     assert 'id="provenance"' in html
     assert 'value="river"' in html
+
+
+def test_feedback_mark_is_three_state_never_a_false_verdict():
+    """Tier-3 answers carry correct === null — NO right/wrong claim exists,
+    so the page may render neither ✅ nor ❌ there. Caught live: null is
+    falsy in JS, so the old two-state ternary stamped a ❌ (a wrongness
+    claim the tier bans) on every multiway answer."""
+    js = (STATIC / "app.js").read_text()
+    assert 'score.correct === null ? ""' in js
+    assert '"neutral"' in js
+    html = (STATIC / "index.html").read_text()
+    assert "#feedback.neutral" in html

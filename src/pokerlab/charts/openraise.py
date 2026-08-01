@@ -41,7 +41,8 @@ import numpy as np
 from . import hands
 from .equity import load_equity_matrix
 from .jamfold import _validate_ante, _validate_depth, joint_prior
-from .ring import BLINDS, RING_ORDER, _regret_match, _validate_table
+from .ring import (BLINDS, RING_ORDER, _regret_match, _validate_table,
+                   table_for_size)
 
 N = 169
 
@@ -314,6 +315,12 @@ OPEN_FORMATIONS: dict[str, tuple[tuple[str, ...], str]] = {
     **{p: (RING_ORDER, p) for p in
        ("UTG", "UTG1", "UTG2", "LJ", "HJ", "CO", "BTN", "SB")},
     "SBhu": (("SB", "BB"), "SB"),
+    # Short-handed tables (3–8 players): button-anchored suffixes of the
+    # 9-max order, every non-BB seat an opener. Formation keys carry the
+    # size ("CO.6max"); the 9-max and HU keys above stay byte-identical.
+    **{f"{p}.{n}max": (table_for_size(n), p)
+       for n in (3, 4, 5, 6, 7, 8)
+       for p in table_for_size(n)[:-1]},
 }
 
 

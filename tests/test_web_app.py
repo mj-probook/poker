@@ -111,10 +111,21 @@ def test_index_and_static_served(client):
 # interval to overflow datetime.max -- HTTP 500 as a reward for correct play.
 # Fixing either alone hides the other, so this drives both from the HTTP edge.
 # --------------------------------------------------------------------------- #
-def test_long_correct_streak_never_500s_and_covers_the_population(client):
-    from pokerlab.drills import generator as gen
+def _walk_covers_and_never_500s(population):
+    """Literal correct-streak walk over an app serving `population`: every
+    category must be reached END TO END (served, answered, persisted) with
+    zero 500s. Extracted so the fast suite walks a category SAMPLE (the full
+    5k-category vocabulary costs ~a minute and runs behind `slow`)."""
+    from fastapi.testclient import TestClient as _TC
 
-    population = gen.default_population()
+    from pokerlab.web.app import create_app as _ca
+
+    app = _ca(db_path=":memory:", seed=0, population=population)
+    with _TC(app) as client:
+        _walk(client, population)
+
+
+def _walk(client, population):
     all_cats = {d.leak_key for d in population}
     # The action the drill's own solution prices highest — answering it is
     # always graded correct (ev_loss 0). The walk used to answer
@@ -123,8 +134,12 @@ def test_long_correct_streak_never_500s_and_covers_the_population(client):
     # re-prioritize those lapsed categories ahead of unseen ones (worst-leak
     #-first IS the scheduler's product behavior), so the "correct streak"
     # this test is named for has to be literal, not approximate.
-    best_of = {d.drill_id: max(d.solution.actions,
-                               key=lambda a: d.solution.actions[a][0])
+    # Tier-3 multiway drills carry NO action EVs (the honesty rule) — no
+    # "best" exists, any legal action is a completed rep and SM-2 schedules
+    # it as a pass, so the streak stays literal there too.
+    best_of = {d.drill_id: (max(d.solution.actions,
+                                key=lambda a: d.solution.actions[a][0])
+                            if d.solution.actions else d.legal_actions[0])
                for d in population}
     seen: set[str] = set()
 
@@ -146,6 +161,38 @@ def test_long_correct_streak_never_500s_and_covers_the_population(client):
         assert best.status_code == 200, f"500 on iteration: {best.text}"
 
     assert seen == all_cats, f"unreachable categories: {sorted(all_cats - seen)}"
+
+
+def test_correct_streak_covers_a_full_category_sample():
+    """Fast-suite walk: a seeded sample keeping EVERY (kind, table-size,
+    tier) combination and ~1 in 8 of the rest — end-to-end coverage of the
+    whole vocabulary shape without the full 5k-category minute."""
+    import random as _random
+
+    from pokerlab.drills import generator as gen
+
+    population = gen.default_population()
+    by_cat: dict[str, list] = {}
+    for d in population:
+        by_cat.setdefault(d.leak_key, []).append(d)
+    rng = _random.Random(7)
+    keep_keys: set[str] = set()
+    seen_shapes: set[tuple] = set()
+    for cat, ds in by_cat.items():
+        d = ds[0]
+        shape = (d.kind, len(d.table), d.tier, bool(d.versus))
+        if shape not in seen_shapes or rng.random() < 0.125:
+            seen_shapes.add(shape)
+            keep_keys.add(cat)
+    sample = [d for d in population if d.leak_key in keep_keys]
+    _walk_covers_and_never_500s(sample)
+
+
+@pytest.mark.slow  # ~1 min: the FULL 5k-category vocabulary, literally walked
+def test_long_correct_streak_never_500s_and_covers_the_population():
+    from pokerlab.drills import generator as gen
+
+    _walk_covers_and_never_500s(gen.default_population())
 
 
 def test_repeated_answer_for_one_drill_counts_once(client):

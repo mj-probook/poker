@@ -31,12 +31,16 @@ def rendered(tmp_path_factory):
     from pokerlab.drills.generator import open_drills
     from pokerlab.drills.river import river_drills
 
+    from pokerlab.drills.multiway import multiway_drills
+
     opens = open_drills()
     spots = {
         "open": _spot_json(next(d for d in opens if d.kind == "open"
                                 and d.depth_bb == 20.0)),
         "resteal": _spot_json(next(d for d in opens if d.kind == "resteal")),
         "river": _spot_json(river_drills()[0]),
+        "multiway": _spot_json(next(d for d in multiway_drills()
+                                    if len(d.board) == 3)),
     }
     html = (STATIC / "index.html").read_text()
     import re
@@ -72,6 +76,16 @@ def test_resteal_spot_renders_the_raise_not_an_allin(rendered):
     assert bet in r["seats_dump"]
     assert "rbet" in r["seats_dump"]
     assert "ALL-IN" not in r["seats_dump"]
+
+
+def test_multiway_spot_renders_three_handed_flop(rendered):
+    out, spots = rendered
+    r = out["multiway"]
+    assert r["board_cards"] == 3
+    assert set(r["buttons"]) == {"check", "bet"}
+    assert "BTN" in r["seats_dump"] and "CO" in r["seats_dump"]
+    # tier-3: no EV unit chip exists to render
+    assert "EV in" not in r["meta_dump"]
 
 
 def test_river_spot_renders_board_concrete_cards_and_provenance(rendered):

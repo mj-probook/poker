@@ -124,9 +124,13 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
     # as gradings tier-3). SQLite cannot drop NOT NULL via ALTER, so a legacy
     # table is rebuilt: rename it aside, let the checked-in schema recreate the
     # current shape, copy every row (all satisfy the weaker constraint), drop.
-    (notnull,) = conn.execute(
-        "SELECT [notnull] FROM pragma_table_info('drill_attempts')"
-        " WHERE name = 'ev_loss'").fetchone()
+    # drill_attempts.correct joined ev_loss as nullable when tier-3 multiway
+    # drills shipped: no right/wrong claim exists there, so persisting a
+    # fabricated 0/1 would smuggle an accuracy claim the tier bans. Same
+    # rebuild dance, either column triggers it.
+    notnull = conn.execute(
+        "SELECT MAX([notnull]) FROM pragma_table_info('drill_attempts')"
+        " WHERE name IN ('ev_loss', 'correct')").fetchone()[0]
     if notnull:
         conn.execute("ALTER TABLE drill_attempts"
                      " RENAME TO drill_attempts_legacy")
@@ -143,14 +147,16 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
 # drill_attempts
 # --------------------------------------------------------------------------- #
 def insert_drill_attempt(conn: sqlite3.Connection, leak_key: str, kind: str,
-                         chosen: str, correct: bool, ev_loss: float | None,
-                         ts: str) -> int:
+                         chosen: str, correct: bool | None,
+                         ev_loss: float | None, ts: str) -> int:
     """`ev_loss` is None iff the attempt chose an off-tree action — the chart
-    never priced it, so no number exists (see the schema comment)."""
+    never priced it, so no number exists (see the schema comment). `correct`
+    is None iff the drill is tier 3 — no right/wrong claim exists there."""
     cur = conn.execute(
         "INSERT INTO drill_attempts(leak_key, kind, chosen, correct, ev_loss, ts)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (leak_key, kind, chosen, int(bool(correct)),
+        (leak_key, kind, chosen,
+         None if correct is None else int(bool(correct)),
          None if ev_loss is None else float(ev_loss), ts),
     )
     conn.commit()
