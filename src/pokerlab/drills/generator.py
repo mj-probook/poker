@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -120,6 +121,20 @@ class Drill:
     # keep the 169-class label and synthetic display suits.
     board: tuple[str, ...] = ()
     hero_cards: tuple[str, ...] = ()
+    # Tier-3 only: the population table's key for this spot ("6max:BB") —
+    # the ONLY grading reference a multiway drill has (frequency flags,
+    # never EV). Empty for tiers 1/2, whose Solutions carry priced actions.
+    population_key: str = ""
+    # Tier-3 only: clearly-labeled ADVISORY analysis (HU-collapsed solve
+    # numbers, MC equity, and the caveat sentence the page must render with
+    # them). Never consulted by grading — study aid, not answer key.
+    advisory: dict | None = None
+    # Players DEALT into the hand when `table` no longer states it: postflop
+    # multiway lists only the SURVIVORS in `table` (3 seats drawn), but six
+    # were dealt at the 6-max table and the players filter is a formation
+    # axis, not a survivors count. 0 = "table/tournament already says it"
+    # (every preflop kind; ICM).
+    seats_dealt: int = 0
 
 
 # SB open distractors: plausible at the table, unpriced by the jam/fold chart.
@@ -204,50 +219,67 @@ def jamfold_drills(depths: tuple[int, ...] = DEPTHS) -> list[Drill]:
     return out
 
 
+@lru_cache(maxsize=1)
+def _ring_drills_cached() -> tuple[Drill, ...]:
+    return tuple(_build_ring_drills())
+
+
 def ring_drills() -> list[Drill]:
-    """9-max first-in jam drills for every non-blind position, plus a defend
-    drill for every (responder, jammer) pair — all from the certified ring
-    chain charts (charts/ring.py; the model's three restrictions ride in each
-    Solution's range_ctx)."""
+    return list(_ring_drills_cached())
+
+
+def _build_ring_drills() -> list[Drill]:
+    """First-in jam drills for every non-blind position, plus a defend drill
+    for every (responder, jammer) pair — at EVERY table size the artifact
+    ships (3–9 players since the table-size axis; charts/ring.py; the
+    model's three restrictions ride in each Solution's range_ctx).
+
+    Artifact-DRIVEN on purpose: the population is whatever the checked-in
+    charts certify, never a live solve — a missing key means those drills do
+    not exist yet, not a multi-minute import."""
+    from pokerlab.charts.ring import load_ring_charts
+
     out: list[Drill] = []
-    for jammer in RING_JAMMERS:
-        behind = RING_ORDER[RING_ORDER.index(jammer) + 1:]
-        for d in DEPTHS:
-            for ante in ANTES:
-                a = f", {ante:g}bb ante" if ante else ""
-                pot = 2.0 * float(d)
-                rng = ring_range(jammer, float(d), ante)
-                leak = ring_category(jammer, float(d), ante_bb=ante)
-                for hand in hands.HAND_CLASSES:
-                    out.append(Drill(
-                        drill_id=f"{leak}:{hand}", kind="ring",
-                        position=jammer, depth_bb=float(d), hand_label=hand,
-                        solution=rng[hand], pot_bb=pot, leak_key=leak,
-                        legal_actions=("jam", "fold"),
-                        description=(f"{jammer} {int(d)}bb{a}, 9-max "
-                                     f"first-in, {hand}: your action?"),
-                        off_tree_actions=_OFF_TREE_SB,
-                        versus="", table=RING_ORDER,
-                    ))
-                for resp in behind:
-                    rngd = ring_defense_range(resp, versus=jammer,
-                                              depth_bb=float(d), ante=ante)
-                    leakd = ring_category(resp, float(d), versus=jammer,
-                                          ante_bb=ante)
-                    for hand in hands.HAND_CLASSES:
-                        out.append(Drill(
-                            drill_id=f"{leakd}:{hand}", kind="ring",
-                            position=resp, depth_bb=float(d),
-                            hand_label=hand, solution=rngd[hand],
-                            pot_bb=pot, leak_key=leakd,
-                            legal_actions=("call", "fold"),
-                            description=(f"{resp} {int(d)}bb{a} facing a "
-                                         f"{jammer} all-in (9-max), {hand}: "
-                                         f"call or fold?"),
-                            action_note=_BB_NOTE,
-                            versus=jammer, versus_action="all-in",
-                            table=RING_ORDER,
-                        ))
+    for sol in load_ring_charts().values():
+        jammer, table = sol.jammer, sol.table
+        size = len(table)
+        d, ante = sol.depth_bb, sol.ante
+        ring_tag = "9-max" if size == 9 else f"{size}-max"
+        a = f", {ante:g}bb ante" if ante else ""
+        pot = 2.0 * d
+        behind = table[table.index(jammer) + 1:]
+        rng = ring_range(jammer, d, ante, table_size=size)
+        leak = ring_category(jammer, d, ante_bb=ante, table_size=size)
+        for hand in hands.HAND_CLASSES:
+            out.append(Drill(
+                drill_id=f"{leak}:{hand}", kind="ring",
+                position=jammer, depth_bb=d, hand_label=hand,
+                solution=rng[hand], pot_bb=pot, leak_key=leak,
+                legal_actions=("jam", "fold"),
+                description=(f"{jammer} {int(d)}bb{a}, {ring_tag} "
+                             f"first-in, {hand}: your action?"),
+                off_tree_actions=_OFF_TREE_SB,
+                versus="", table=table,
+            ))
+        for resp in behind:
+            rngd = ring_defense_range(resp, versus=jammer, depth_bb=d,
+                                      ante=ante, table_size=size)
+            leakd = ring_category(resp, d, versus=jammer, ante_bb=ante,
+                                  table_size=size)
+            for hand in hands.HAND_CLASSES:
+                out.append(Drill(
+                    drill_id=f"{leakd}:{hand}", kind="ring",
+                    position=resp, depth_bb=d,
+                    hand_label=hand, solution=rngd[hand],
+                    pot_bb=pot, leak_key=leakd,
+                    legal_actions=("call", "fold"),
+                    description=(f"{resp} {int(d)}bb{a} facing a "
+                                 f"{jammer} all-in ({ring_tag}), {hand}: "
+                                 f"call or fold?"),
+                    action_note=_BB_NOTE,
+                    versus=jammer, versus_action="all-in",
+                    table=table,
+                ))
     return out
 
 
@@ -345,7 +377,16 @@ def icm_drills(tournament: TournamentContext = BUBBLE, sb_seat: int = 0,
     return out
 
 
+@lru_cache(maxsize=1)
+def _open_drills_cached() -> tuple[Drill, ...]:
+    return tuple(_build_open_drills())
+
+
 def open_drills() -> list[Drill]:
+    return list(_open_drills_cached())
+
+
+def _build_open_drills() -> list[Drill]:
     """First-in OPEN drills: fold / raise 2.2bb / raise 3bb / jam, all priced
     (charts/openraise.py), for every 9-max position plus the HU SB — the
     answer to "the raise buttons should be real options". Limp remains the
@@ -357,13 +398,22 @@ def open_drills() -> list[Drill]:
     defend node's CFR strategy is arbitrary, and a drill graded against noise
     would be a fabricated answer key wearing a real one's clothes.
     """
+    from pokerlab.charts.openraise import load_open_charts, open_cache_key
+
+    charts = load_open_charts()
     out: list[Drill] = []
     for formation, (table, opener) in OPEN_FORMATIONS.items():
         behind = table[table.index(opener) + 1:]
         hu = formation == "SBhu"
-        ring_tag = "heads-up" if hu else "9-max"
+        ring_tag = ("heads-up" if hu
+                    else "9-max" if len(table) == 9
+                    else f"{len(table)}-max")
         for d in DEPTHS:
             for ante in ANTES:
+                # artifact-driven, like ring_drills: a formation the shipped
+                # charts do not certify has no drills, not a live solve
+                if open_cache_key(formation, float(d), float(ante)) not in charts:
+                    continue
                 a = f", {ante:g}bb ante" if ante else ""
                 pot = 2.0 * float(d)
                 sol = open_solution(formation, float(d), ante)
@@ -425,20 +475,35 @@ def open_drills() -> list[Drill]:
 
 
 def default_population() -> list[Drill]:
+    """Cached per process: the population is deterministic and ~850k Drill
+    objects — every web-test module (and every create_app) re-deriving it
+    would cost seconds and a duplicate gigabyte per build. A fresh list is
+    returned each call; the Drills themselves are shared and read-only."""
+    return list(_population_cached())
+
+
+@lru_cache(maxsize=1)
+def _population_cached() -> tuple[Drill, ...]:
+    return tuple(_build_population())
+
+
+def _build_population() -> list[Drill]:
     """The full drill population served by the web app: HU jam/fold + ICM
     bubble + 9-max ring + the open game (priced raises) + resteals. One
     function on purpose — the app-wide honesty pins (every kind has an EV
     unit, every source a verb, the scheduler budget counts every category)
     sweep THIS list, so a population source that lived outside it would
     silently escape them."""
-    # imported here, not at module top: river.py imports Drill from THIS
-    # module, so a top-level import would be circular
+    # imported here, not at module top: river.py/multiway.py import Drill
+    # from THIS module, so top-level imports would be circular
+    from pokerlab.drills.multiway import multiway_drills
     from pokerlab.drills.river import river_drills
 
     return (jamfold_drills() + icm_drills()
             + icm_drills(FT3, sb_seat=2, bb_seat=0, label="ft3")
             + icm_drills(FT5, sb_seat=0, bb_seat=1, label="ft5")
-            + ring_drills() + open_drills() + river_drills())
+            + ring_drills() + open_drills() + river_drills()
+            + multiway_drills())
 
 
 def sample_drills(drills: list[Drill], n: int, seed: int) -> list[Drill]:

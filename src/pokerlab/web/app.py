@@ -28,6 +28,8 @@ from pokerlab.drills import generator as gen
 from pokerlab.drills import scheduler as sch
 from pokerlab.drills.scoring import MIX_FREQ, epsilon, score
 from pokerlab.hh import persist
+from pokerlab.hh.grade import RARE_ACTION_FREQ
+from pokerlab.hh.population import load_population
 from pokerlab.hh.tiers import TIER_LABELS
 from pokerlab.store import db, views
 from pokerlab.types import TIER_BEST_AVAILABLE, TIER_CHART
@@ -92,6 +94,10 @@ EV_UNITS: dict[str, str] = {
     "open": "bb",
     "resteal": "bb",
     "river": "bb",
+    # Multiway is tier 3: NO EV exists (hard rule), so no unit exists to
+    # advertise — the page hides the chip on the empty string rather than
+    # rendering a unit for a number that can never appear.
+    "multiway": "",
 }
 
 # WHICH ORACLE decided the best action, in the feedback line's own words
@@ -114,6 +120,7 @@ EV_UNITS: dict[str, str] = {
 SOURCE_VERBS: dict[str, str] = {
     "chart": "Chart plays",
     "subgame_solver": "Solver plays",
+    "population": "Population plays",
 }
 
 # What a tier-2 approximation actually means, in the server's words (PLAN §5.3
@@ -311,9 +318,17 @@ def _rta_json(drill: gen.Drill) -> dict:
     }
 
 
-def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
+def create_app(db_path: str = ":memory:", seed: int = 0,
+               population: list[gen.Drill] | None = None) -> FastAPI:
+    """`population` is an injection seam for tests (a category-sampled app
+    walks in seconds; the full 850k-drill population walks in minutes and
+    lives behind the slow marker). The product always serves the default."""
     app = FastAPI(title="pokerlab drills")
-    population = gen.default_population()
+    population = (population if population is not None
+                  else gen.default_population())
+    # tier-3 baseline table (hh.population) — versioned, in-house; the ONLY
+    # grading reference multiway drills have
+    pop_table = load_population()
     by_id = {d.drill_id: d for d in population}
     by_cat: dict[str, list[gen.Drill]] = {}
     for d in population:
@@ -348,16 +363,31 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     def _mode_of(d: gen.Drill) -> str:
         if d.kind == "jamfold":
             return "hu"
-        if d.kind in ("icm", "open", "resteal", "river"):
+        if d.kind in ("icm", "open", "resteal", "river", "multiway"):
             return d.kind
         return "ring-defend" if d.versus else "ring-jam"
 
     MODES = ("all", "hu", "icm", "ring-jam", "ring-defend", "open", "resteal",
-             "river")
-    cat_tag: dict[str, tuple[str, str]] = {}
+             "river", "multiway")
+
+    def _players_of(d: gen.Drill) -> int:
+        """Players dealt into the drill's hand — a formation fact, NOT a
+        survivors count. Postflop multiway states it explicitly (its `table`
+        lists only the 3 flop survivors of a 6-max deal — review [5]); other
+        seat-attributed drills state it via `table`; ICM multiway states it
+        via the tournament context. No fourth case by construction."""
+        if d.seats_dealt:
+            return d.seats_dealt
+        if d.table:
+            return len(d.table)
+        return d.tournament.players_remaining
+
+    cat_tag: dict[str, tuple[str, str, int]] = {}
     for d in population:
-        cat_tag.setdefault(d.leak_key, (_mode_of(d), d.position))
+        cat_tag.setdefault(d.leak_key,
+                           (_mode_of(d), d.position, _players_of(d)))
     positions = sorted({d.position for d in population})
+    player_counts = sorted({t[2] for t in cat_tag.values()})
 
     conn = db.connect(db_path, check_same_thread=False)
     lock = threading.Lock()
@@ -378,27 +408,77 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
     last: dict[str, object] = {"drill_id": None, "response": None}
 
     @app.get("/api/drill/next")
-    def next_drill(mode: str = "all", pos: str = "all") -> dict:
+    def next_drill(mode: str = "all", pos: str = "all",
+                   players: str = "all") -> dict:
         if mode not in MODES:
             raise HTTPException(400, f"unknown mode {mode!r}; valid: {MODES}")
         if pos != "all" and pos not in positions:
             raise HTTPException(
                 400, f"unknown position {pos!r}; valid: {sorted(positions)}")
+        if players != "all":
+            if not players.isdigit() or int(players) not in player_counts:
+                raise HTTPException(
+                    400, f"unknown players {players!r}; valid: "
+                         f"{player_counts}")
         allowed = [c for c in cat_order
                    if (mode == "all" or cat_tag[c][0] == mode)
-                   and (pos == "all" or cat_tag[c][1] == pos)]
+                   and (pos == "all" or cat_tag[c][1] == pos)
+                   and (players == "all"
+                        or cat_tag[c][2] == int(players))]
         if not allowed:
             # loud, never a silent fallback to the unfiltered pool — a filter
             # that quietly widens itself is lying about what it serves
             raise HTTPException(
                 400, f"no drills match mode={mode!r} pos={pos!r} "
-                     "(e.g. UTG never defends a jam — it acts first)")
+                     f"players={players!r} (e.g. UTG never defends a jam — "
+                     "it acts first; UTG only exists at a 9-handed table)")
         with lock:
             now = datetime.now(timezone.utc)
             cat = sch.select_next(conn, now, categories=allowed) or allowed[0]
             pool = by_cat.get(cat) or population
             last["drill_id"] = None
             return _spot_json(rng.choice(pool))
+
+    @app.get("/api/drill/range")
+    def drill_range(drill_id: str) -> dict:
+        """The 13×13 class grid of the answer key the drill was graded by.
+
+        Built from the SAME population Solutions that grade answers — no
+        second chart lookup that could drift. Cells for classes the key does
+        not hold (river: blocked/out-of-range combos) are null, never a
+        rendered fold-100%: absence of an answer is not an answer.
+        """
+        drill = by_id.get(drill_id)
+        if drill is None:
+            raise HTTPException(404, f"unknown drill_id {drill_id!r}")
+        # One postflop category serves TWO boards of the same texture
+        # (river.py — the drill_id embeds the board for this reason), and a
+        # river strategy is board-specific: the grid must come from THIS
+        # board's Solutions, never a last-wins mix across the category.
+        by_label = {d.hand_label: d for d in by_cat[drill.leak_key]
+                    if d.board == drill.board}
+        ranks = "AKQJT98765432"
+        grid = []
+        for i, ri in enumerate(ranks):
+            row = []
+            for j, rj in enumerate(ranks):
+                label = (f"{ri}{ri}" if i == j
+                         else f"{ri}{rj}s" if i < j
+                         else f"{rj}{ri}o")
+                cell_d = by_label.get(label)
+                row.append({
+                    "label": label,
+                    "freq": None if cell_d is None else
+                            {a: float(f) for a, (_, f)
+                             in cell_d.solution.actions.items()},
+                })
+            grid.append(row)
+        return {
+            "actions": list(drill.legal_actions),
+            "grid": grid,
+            "range_ctx": drill.solution.range_ctx,
+            "tier_label": TIER_LABELS[drill.tier],
+        }
 
     @app.post("/api/drill/answer")
     def answer(ans: Answer) -> dict:
@@ -408,6 +488,55 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 raise HTTPException(404, f"unknown drill_id {ans.drill_id!r}")
             if ans.drill_id == last["drill_id"]:
                 return last["response"]          # type: ignore[return-value]
+            if drill.tier == TIER_BEST_AVAILABLE:
+                # Tier 3 (multiway): the one kind with NO right/wrong claim —
+                # no correct, no ev_loss, no RTA readout (there is no solver
+                # answer to read out). Feedback is the population-frequency
+                # contract (hh.grade_tier3's semantics, applied to drills)
+                # plus the drill's clearly-labeled advisory block.
+                if ans.action not in drill.legal_actions:
+                    raise HTTPException(
+                        400, f"unknown action {ans.action!r}; legal: "
+                             f"{list(drill.legal_actions)}")
+                street = drill.leak_key.split("|")[1]
+                freq = pop_table.frequency(drill.population_key, street,
+                                           ans.action)
+                explanation = ("Tier 3 (multiway): no EV grading exists for "
+                               "this spot by design — multiway equilibria "
+                               "are not solved here. ")
+                if freq is None:
+                    explanation += ("No population baseline recorded for "
+                                    "this spot yet; the advisory analysis "
+                                    "is study guidance only.")
+                elif freq < RARE_ACTION_FREQ:
+                    explanation += (f"Population plays {ans.action} only "
+                                    f"{freq:.0%} here — flagged as a "
+                                    "frequency deviation, not an error.")
+                else:
+                    explanation += (f"Population plays {ans.action} "
+                                    f"{freq:.0%} here.")
+                now = datetime.now(timezone.utc)
+                db.insert_drill_attempt(conn, drill.leak_key, drill.kind,
+                                        ans.action, None, None,
+                                        now.isoformat())
+                # SM-2 needs a review outcome to cycle the category; tier 3
+                # has no correctness signal, so every rep schedules as a
+                # pass — a scheduling input, never a claim shown anywhere.
+                sch.schedule_attempt(conn, drill.leak_key, True, now)
+                payload = {
+                    "drill_id": drill.drill_id,
+                    "correct": None,
+                    "ev_loss": None,
+                    "ev_unit": "",
+                    "best_action": None,
+                    "chosen_frequency": None,
+                    "frequency_baseline": freq,
+                    "explanation": explanation,
+                    "rta": None,
+                    "advisory": drill.advisory,
+                }
+                last["drill_id"], last["response"] = ans.drill_id, payload
+                return payload
             rta = _rta_json(drill)
             if ans.action in drill.off_tree_actions:
                 # OFF-TREE distractor: a real button, but outside the solved
@@ -460,9 +589,11 @@ def create_app(db_path: str = ":memory:", seed: int = 0) -> FastAPI:
                 "best_action": rta["best_action"],
                 "chosen_frequency": chosen_frequency,
                 "explanation": explanation,
+                "frequency_baseline": None,
                 # The RTA panel rides on EVERY answer; the page decides whether
                 # to show it (a display toggle), never whether it exists.
                 "rta": rta,
+                "advisory": None,
             }
             last["drill_id"], last["response"] = ans.drill_id, payload
             return payload

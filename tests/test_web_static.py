@@ -129,3 +129,27 @@ def test_index_has_the_postflop_slots():
     assert 'id="board"' in html
     assert 'id="provenance"' in html
     assert 'value="river"' in html
+
+
+def test_feedback_mark_is_three_state_never_a_false_verdict():
+    """Tier-3 answers carry correct === null — NO right/wrong claim exists,
+    so the page may render neither ✅ nor ❌ there. Caught live: null is
+    falsy in JS, so the old two-state ternary stamped a ❌ (a wrongness
+    claim the tier bans) on every multiway answer."""
+    js = (STATIC / "app.js").read_text()
+    assert 'score.correct === null ? ""' in js
+    assert '"neutral"' in js
+    html = (STATIC / "index.html").read_text()
+    assert "#feedback.neutral" in html
+
+
+def test_report_accuracy_cell_never_fabricates_a_percent_from_null():
+    """The multiway kind's accuracy is NULL (no claim exists). JS coerces
+    null * 100 to 0, so an unguarded cell prints "0%" — a fabricated
+    worst-possible-accuracy claim for the exact tier NULL protects
+    (night-shift review [2]). The cell must go through the same null-aware
+    path the other report numbers use."""
+    js = (STATIC / "report.js").read_text()
+    assert "r.accuracy === null" in js
+    assert "(r.accuracy * 100).toFixed" not in js.replace(
+        'r.accuracy === null ? "—" : `${(r.accuracy * 100).toFixed(0)}%`', "")

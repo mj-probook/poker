@@ -22,6 +22,7 @@ from pokerlab.charts.jamfold import jamfold_range
 from pokerlab.drills.categories import (
     jamfold_category,
     postflop_category,
+    ring_category,
     snap_ante,
     snap_depth,
 )
@@ -61,6 +62,16 @@ class Grading:
     # provenance is the chart, and inventing a string here would make an absent
     # disclosure look like a present one.
     provenance: str | None = None
+
+
+def _table_size(d: Decision) -> int:
+    """Players dealt in, from the formation token decisions.py always writes
+    (`"{n}max:{pos}"`). Malformed means a construction bug — refuse loudly,
+    like the seat guard: a silent default would mis-key the grading."""
+    head = d.formation.split("max")[0]
+    if not head.isdigit():
+        raise ValueError(f"malformed formation {d.formation!r}")
+    return int(head)
 
 
 def _jamfold_position(d: Decision) -> str | None:
@@ -113,16 +124,46 @@ def grade_tier1(d: Decision) -> Grading:
     # hand's RAW ante, so grader and drill disagreed for essentially every real
     # MTT hand. Both now key off this one snapped value.
     ante_bb = snap_ante(d.ante_bb)
+    size = _table_size(d)
+    if pos == "SB" and size > 2:
+        # The seam ring.py's docstring recorded, closed on the grader side
+        # too (rev 3.4): folded-to-SB at an n-handed table has n antes of
+        # dead money in the pot — the HU chart priced 2. The ring artifact
+        # now certifies every size 3–9, so the hand keys to ITS OWN table.
+        from pokerlab.charts.ring import ring_range
+
+        leak_key = ring_category("SB", depth_bb, ante_bb=ante_bb,
+                                 table_size=size)
+        ca = _chart_action(d, pos)
+        if ca is None:
+            return Grading(d.index, TIER_CHART, d.action_type, None, None,
+                           None, leak_key, graded=False,
+                           note="off-chart action")
+        sol = ring_range("SB", depth_bb, ante_bb,
+                         table_size=size)[hand_label(d.hole)]
+        sc = score(sol, ca, d.pot_bb)
+        return Grading(d.index, TIER_CHART, ca, sc.best_action,
+                       sc.ev_loss_bb, sc.correct, leak_key, graded=True,
+                       frequency=sc.chosen_frequency,
+                       provenance=sol.range_ctx)
     leak_key = jamfold_category(pos, depth_bb, ante_bb=ante_bb)
     ca = _chart_action(d, pos)
     if ca is None:
         return Grading(d.index, TIER_CHART, d.action_type, None, None, None,
                        leak_key, graded=False, note="off-chart action")
+    # The OTHER half of the seam, disclosed per-hand rather than closed: a
+    # BB defend at a bigger table still keys to the HU chart, because the
+    # ring defense key needs the JAMMER's position and Decision does not
+    # carry it yet. A stated approximation, never a silent one.
+    note = ("defend keyed to the HU chart — the ring defense key needs the "
+            "jammer's position, which imported decisions do not carry yet"
+            if pos == "BB" and size > 2 else "")
     sol = jamfold_range(pos, depth_bb, ante_bb)[hand_label(d.hole)]
     sc = score(sol, ca, d.pot_bb)
     return Grading(d.index, TIER_CHART, ca, sc.best_action, sc.ev_loss_bb,
                    sc.correct, leak_key, graded=True,
-                   frequency=sc.chosen_frequency)
+                   frequency=sc.chosen_frequency,
+                   provenance=sol.range_ctx, note=note)
 
 
 def grade_tier2(d: Decision, solution: Solution | None) -> Grading:

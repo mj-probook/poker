@@ -93,7 +93,7 @@ def jamfold_category(position: str, eff_bb: float, *, icm: bool = False,
 
 
 def ring_category(position: str, eff_bb: float, *, versus: str | None = None,
-                  ante_bb: float = 0.0) -> str:
+                  ante_bb: float = 0.0, table_size: int = 9) -> str:
     """Canonical category for a 9-max first-in push/fold spot.
 
     `versus=None` is the jammer's own decision (`COjam|preflop|jam|10`);
@@ -108,17 +108,26 @@ def ring_category(position: str, eff_bb: float, *, versus: str | None = None,
     """
     pos = position.upper()
     token = _depth_token(eff_bb, ante_bb)
+    # Short-handed formations name their size — a 6-max first-in jam is a
+    # different priced game (fewer players' dead money and fewer hands left
+    # to wake up) than the 9-max one. 9-max keys stay byte-identical (orphan
+    # rule, same as `.icm` and the ante token).
+    size_tag = "" if table_size == 9 else f".{table_size}max"
     if versus is None:
-        tag = ".9max" if pos == "SB" else ""
+        tag = ".9max" if (pos == "SB" and table_size == 9) else size_tag
         return f"{pos}jam{tag}|preflop|jam|{token}"
-    return f"{pos}call.v{versus.upper()}|preflop|call|{token}"
+    return f"{pos}call.v{versus.upper()}{size_tag}|preflop|call|{token}"
 
 
 def open_category(formation: str, eff_bb: float, *, ante_bb: float = 0.0) -> str:
     """Canonical category for a first-in OPEN decision (fold/raise/jam all
-    priced — charts/openraise.py). `formation` is an OPEN_FORMATIONS key:
-    a 9-max position, or "SBhu" for the heads-up table."""
-    return f"{formation}open|preflop|open|{_depth_token(eff_bb, ante_bb)}"
+    priced — charts/openraise.py). `formation` is an OPEN_FORMATIONS key: a
+    9-max position, "SBhu" for the heads-up table, or a size-tagged position
+    ("CO.6max") — the size tag moves AFTER the "open" verb so the token
+    reads "COopen.6max", keeping every existing key byte-identical."""
+    pos, dot, size_tag = formation.partition(".")
+    return (f"{pos}open{dot}{size_tag}|preflop|open|"
+            f"{_depth_token(eff_bb, ante_bb)}")
 
 
 def resteal_category(position: str, formation: str, size_bb: float,

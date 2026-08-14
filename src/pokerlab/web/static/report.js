@@ -170,10 +170,14 @@ function renderGates(gates) {
   ));
 
   box.appendChild(el("h3", "Drill accuracy by kind (last 30 days)"));
+  // accuracy is NULL for the multiway kind — tier 3 makes no right/wrong
+  // claim, and null * 100 coerces to 0, so an unguarded cell would print a
+  // fabricated "0%". "—" is the only honest render.
   box.appendChild(table(
     ["kind", "attempts", "accuracy"], gates.accuracy_by_kind,
     (r) => [[r.kind], [String(r.attempts), "num"],
-            [`${(r.accuracy * 100).toFixed(0)}%`, "num"]]
+            [r.accuracy === null ? "—" : `${(r.accuracy * 100).toFixed(0)}%`,
+             "num"]]
   ));
 }
 

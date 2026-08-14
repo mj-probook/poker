@@ -26,14 +26,18 @@ def drills():
 
 def test_ring_population_covers_jammers_and_all_defender_pairs(drills):
     pairs = sum(len(RING_ORDER) - 1 - RING_ORDER.index(j)
-                for j in RING_JAMMERS)          # 35 defender pairs
-    assert len(drills) == (len(RING_JAMMERS) + pairs) * 5 * 3 * 169
+                for j in RING_JAMMERS)          # 36 defender pairs at 9-max
+    # the table-size axis (rev 3.4): every 3–8-handed table adds its own
+    # jammers (n-1) and defender pairs (n(n-1)/2)
+    short = sum((n - 1) + n * (n - 1) // 2 for n in (3, 4, 5, 6, 7, 8))
+    assert len(drills) == (len(RING_JAMMERS) + pairs + short) * 5 * 3 * 169
     assert {d.kind for d in drills} == {"ring"}
 
 
 def test_ring_jam_drill_shape(drills):
     d = next(x for x in drills if x.position == "CO" and not x.versus
              and x.hand_label == "AKs" and x.depth_bb == 10.0
+             and len(x.table) == 9
              and "a" not in x.leak_key.rsplit("|", 1)[1])
     assert d.legal_actions == ("jam", "fold")
     assert len(d.off_tree_actions) >= 3        # first-in spots get distractors
@@ -44,7 +48,8 @@ def test_ring_jam_drill_shape(drills):
 
 def test_ring_defense_drill_shape(drills):
     d = next(x for x in drills if x.position == "BB" and x.versus == "CO"
-             and x.hand_label == "AA" and x.depth_bb == 10.0)
+             and x.hand_label == "AA" and x.depth_bb == 10.0
+             and len(x.table) == 9)
     assert d.legal_actions == ("call", "fold")
     assert d.off_tree_actions == ()            # facing an all-in: complete at 2
     assert d.action_note
@@ -59,11 +64,12 @@ def test_sb_ring_formation_closes_the_ante_seam(drills):
     sr_state/gradings row is orphaned."""
     assert ring_category("SB", 10.0) == "SBjam.9max|preflop|jam|10"
     sb = next(d for d in drills if d.position == "SB" and not d.versus
-              and d.depth_bb == 10.0)
+              and d.depth_bb == 10.0 and len(d.table) == 9)
     assert sb.leak_key.startswith("SBjam.9max|")
     assert "9-max" in sb.description
     # and the BB defends against it under the ring naming
-    bb = next(d for d in drills if d.versus == "SB" and d.position == "BB")
+    bb = next(d for d in drills if d.versus == "SB" and d.position == "BB"
+              and len(d.table) == 9)
     assert bb.leak_key.startswith("BBcall.vSB|")
 
 

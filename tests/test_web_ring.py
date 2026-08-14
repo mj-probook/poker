@@ -24,7 +24,8 @@ def _states(spot):
 
 
 def test_ring_jam_spot_carries_every_seat_state(ring):
-    d = next(x for x in ring if x.position == "CO" and not x.versus)
+    d = next(x for x in ring if x.position == "CO" and not x.versus
+             and len(x.table) == 9)
     spot = _spot_json(d)
     assert _states(spot) == [
         ("UTG", "folded"), ("UTG1", "folded"), ("UTG2", "folded"),
@@ -35,7 +36,8 @@ def test_ring_jam_spot_carries_every_seat_state(ring):
 
 
 def test_ring_defense_spot_marks_jammer_and_intermediate_folds(ring):
-    d = next(x for x in ring if x.position == "BB" and x.versus == "CO")
+    d = next(x for x in ring if x.position == "BB" and x.versus == "CO"
+             and len(x.table) == 9)
     spot = _spot_json(d)
     assert _states(spot) == [
         ("UTG", "folded"), ("UTG1", "folded"), ("UTG2", "folded"),
