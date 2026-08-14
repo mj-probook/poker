@@ -71,5 +71,10 @@ def test_full_loop_hh_to_web_drill(tmp_path):
         assert spot["drill_id"].startswith(top + ":")   # a drill for the top leak
         answer = client.post("/api/drill/answer",
                              json={"drill_id": spot["drill_id"], "action": "jam"}).json()
-        assert "correct" in answer and "ev_loss_bb" in answer
+        # payload contract is ev_loss + ev_unit (test_web_app.py: the old
+        # ev_loss_bb key baked the unit into the name, broken by ICM's $
+        # delta) — this slow test kept the old key long after the rename,
+        # the exact rot the fast/slow split risks
+        assert "correct" in answer and answer["ev_loss"] is not None
+        assert answer["ev_unit"] == "bb"
         assert answer["best_action"] in {"jam", "fold"}
