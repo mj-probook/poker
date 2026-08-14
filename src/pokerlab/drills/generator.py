@@ -129,6 +129,12 @@ class Drill:
     # numbers, MC equity, and the caveat sentence the page must render with
     # them). Never consulted by grading — study aid, not answer key.
     advisory: dict | None = None
+    # Players DEALT into the hand when `table` no longer states it: postflop
+    # multiway lists only the SURVIVORS in `table` (3 seats drawn), but six
+    # were dealt at the 6-max table and the players filter is a formation
+    # axis, not a survivors count. 0 = "table/tournament already says it"
+    # (every preflop kind; ICM).
+    seats_dealt: int = 0
 
 
 # SB open distractors: plausible at the table, unpriced by the jam/fold chart.

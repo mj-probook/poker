@@ -371,9 +371,13 @@ def create_app(db_path: str = ":memory:", seed: int = 0,
              "river", "multiway")
 
     def _players_of(d: gen.Drill) -> int:
-        """Players dealt into the drill's hand — a formation fact. Seat-
-        attributed drills state it via `table`; ICM multiway states it via
-        the tournament context; there is no third case by construction."""
+        """Players dealt into the drill's hand — a formation fact, NOT a
+        survivors count. Postflop multiway states it explicitly (its `table`
+        lists only the 3 flop survivors of a 6-max deal — review [5]); other
+        seat-attributed drills state it via `table`; ICM multiway states it
+        via the tournament context. No fourth case by construction."""
+        if d.seats_dealt:
+            return d.seats_dealt
         if d.table:
             return len(d.table)
         return d.tournament.players_remaining
@@ -447,7 +451,12 @@ def create_app(db_path: str = ":memory:", seed: int = 0,
         drill = by_id.get(drill_id)
         if drill is None:
             raise HTTPException(404, f"unknown drill_id {drill_id!r}")
-        by_label = {d.hand_label: d for d in by_cat[drill.leak_key]}
+        # One postflop category serves TWO boards of the same texture
+        # (river.py — the drill_id embeds the board for this reason), and a
+        # river strategy is board-specific: the grid must come from THIS
+        # board's Solutions, never a last-wins mix across the category.
+        by_label = {d.hand_label: d for d in by_cat[drill.leak_key]
+                    if d.board == drill.board}
         ranks = "AKQJT98765432"
         grid = []
         for i, ri in enumerate(ranks):

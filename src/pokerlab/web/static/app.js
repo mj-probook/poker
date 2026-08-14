@@ -496,7 +496,10 @@ function renderAdvisory(adv) {
     box.innerHTML = "";
     return;
   }
-  let html = `<p class="caveat">${adv.caveat}</p>`;
+  // Advisory fields render only when actually present and numeric — a
+  // malformed payload must show LESS, never "NaN%"/"undefined" (which would
+  // read as data in a block whose whole job is honest numbers).
+  let html = adv.caveat ? `<p class="caveat">${adv.caveat}</p>` : "";
   if (adv.solve) {
     const rows = Object.entries(adv.solve)
       .sort((a, b) => b[1] - a[1])
@@ -505,9 +508,11 @@ function renderAdvisory(adv) {
     html += `<table>${rows}</table>`;
     html += `<p class="eqnote">HU-collapsed solve, measured gap ${adv.gap}bb</p>`;
   }
-  html += `<p>equity vs the field: ` +
-          `${Math.round(adv.equity_vs_field * 100)}%</p>`;
-  html += `<p class="eqnote">${adv.equity_note}</p>`;
+  if (Number.isFinite(adv.equity_vs_field)) {
+    html += `<p>equity vs the field: ` +
+            `${Math.round(adv.equity_vs_field * 100)}%</p>`;
+  }
+  if (adv.equity_note) html += `<p class="eqnote">${adv.equity_note}</p>`;
   box.innerHTML = html;
   box.hidden = false;
 }

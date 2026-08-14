@@ -80,10 +80,16 @@ def test_multiway_spot_payload_and_filter(client):
     assert spot["ev_unit"] == ""             # no EV unit exists to advertise
     assert len(spot["seats"]) == 3
     assert spot["legal_actions"] == ["check", "bet"]
-    # players=3 alone may serve the 3-max ring tables too (the table-size
-    # axis); combined with the mode it must land on a multiway drill
-    spot3 = client.get("/api/drill/next?mode=multiway&players=3").json()
-    assert spot3["kind"] == "multiway"
+    # The players axis counts players DEALT INTO THE HAND — a formation
+    # fact. Six were dealt at this 6-max table; three SURVIVED to the flop.
+    # Filing the drill under players=3 conflated the two (night-shift
+    # review [5]): the scene still draws 3 seats, but the filter must key
+    # on 6, and the impossible combination 400s loudly like every other.
+    spot6 = client.get("/api/drill/next?mode=multiway&players=6").json()
+    assert spot6["kind"] == "multiway"
+    assert len(spot6["seats"]) == 3
+    assert client.get(
+        "/api/drill/next?mode=multiway&players=3").status_code == 400
 
 
 def test_store_accepts_and_isolates_null_correct():

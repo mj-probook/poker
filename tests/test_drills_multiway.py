@@ -85,3 +85,23 @@ def test_aa_has_more_equity_than_72o_on_neutral_boards():
              if d.hand_label == "72o"]
     assert aa and trash
     assert sum(aa) / len(aa) > sum(trash) / len(trash)
+
+
+def test_missing_artifact_fails_with_the_regen_command(tmp_path):
+    """BOTH loaders name the gen script when the npz is absent. The builder
+    calls load_equities first, so a guard only on load_multiway_advisory is
+    unreachable — the user would get numpy's bare error instead of the fix
+    (night-shift review [1])."""
+    from pokerlab.drills.multiway import load_equities
+    gone = str(tmp_path / "nope.npz")
+    for loader in (load_equities, load_multiway_advisory):
+        with pytest.raises(FileNotFoundError, match="gen_multiway_advisory"):
+            loader(gone)
+
+
+def test_board_drift_names_the_regen_command():
+    """A board list that drifted from the shipped artifact must say how to
+    fix it, not die with a bare KeyError (night-shift review [1])."""
+    from pokerlab.drills.multiway import _require_board
+    with pytest.raises(KeyError, match="gen_multiway_advisory"):
+        _require_board({"2c2d2h2s3c": object()}, "AhKhQh7d2s")

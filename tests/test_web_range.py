@@ -62,6 +62,37 @@ def test_range_grid_for_river_marks_missing_classes_null(client):
     assert any(c["freq"] is not None for c in cells)
 
 
+def test_range_grid_never_mixes_boards_within_a_category(client):
+    """A river/multiway category serves TWO boards of the same texture
+    (river.py: drill_id embeds the board for exactly this reason). The grid
+    for a drill must be built from ITS board's Solutions only — a last-wins
+    dict over the whole category showed board B's frequencies to a user
+    drilled on board A (night-shift logic sweep)."""
+    from pokerlab.drills.river import river_drills
+
+    by_cat: dict = {}
+    for d in river_drills():
+        by_cat.setdefault(d.leak_key, set()).add(d.board)
+    cat, boards = next((k, v) for k, v in by_cat.items() if len(v) > 1)
+    pairs = {}                       # hand_label -> {board: freqs}
+    for d in river_drills():
+        if d.leak_key == cat:
+            pairs.setdefault(d.hand_label, {})[d.board] = {
+                a: f for a, (_, f) in d.solution.actions.items()}
+    # a class whose strategy DIFFERS between the two boards — the witness
+    label, per_board = next(
+        (lb, pb) for lb, pb in pairs.items()
+        if len(pb) == 2 and len(set(map(str, pb.values()))) == 2)
+    for d in river_drills():
+        if d.leak_key == cat and d.hand_label == label:
+            r = client.get("/api/drill/range",
+                           params={"drill_id": d.drill_id})
+            cell = next(c for row in r.json()["grid"] for c in row
+                        if c["label"] == label)
+            want = pytest.approx(per_board[d.board])
+            assert {a: f for a, f in cell["freq"].items()} == want
+
+
 def test_range_grid_unknown_drill_404s(client):
     assert client.get("/api/drill/range",
                       params={"drill_id": "nope:AA"}).status_code == 404

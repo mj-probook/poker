@@ -105,6 +105,25 @@ def test_category_priority_excludes_tier_3():
     assert views.category_priority(conn) == []
 
 
+def test_category_priority_never_fabricates_a_rate_for_null_correct():
+    """A tier-3 drill attempt carries correct=NULL — no right/wrong claim.
+
+    Night-shift review [2]: the dr CTE AVG'd an all-NULL category to NULL and
+    the COALESCE then reported error_rate 0.0 — a fabricated "never wrong"
+    claim for the exact tier the NULL exists to protect. Such a category must
+    simply be ABSENT: no signal from either source, nothing to rank.
+    """
+    conn = db.connect(":memory:")
+    mw = "mw3.BTNCOBB.dry|flop|root"
+    for i in range(3):
+        db.insert_drill_attempt(conn, mw, "multiway", "check", None, None,
+                                f"2026-08-01T00:00:{i:02d}")
+    _seed(conn)                              # graded categories still rank
+    rows = {r["leak_key"]: r for r in views.category_priority(conn)}
+    assert mw not in rows
+    assert rows["SBjam:10bb"]["error_rate"] == pytest.approx(0.75)
+
+
 # --------------------------------------------------------------------------- #
 # Round-3 finding [P6'] (P1): plan §5.4 measures progress by "decision-quality
 # trends over large samples", and neither trend was computable. Both are
@@ -167,3 +186,22 @@ def test_accuracy_by_kind_reports_an_empty_window_as_no_rows():
                             "2026-01-01T00:00:00")
     assert views.accuracy_by_kind(conn, window_days=7,
                                   now="2026-07-19T00:00:00") == []
+
+
+def test_accuracy_by_kind_keeps_the_multiway_kind_honest():
+    """Tier-3 attempts (correct=NULL) count as PRACTICE VOLUME but make no
+    accuracy claim: the row stays (attempts real), accuracy is None, and it
+    sorts BELOW every graded kind — a no-claim row must never outrank a
+    genuinely bad one in a worst-first list (night-shift review [2])."""
+    conn = db.connect(":memory:")
+    for i in range(3):
+        db.insert_drill_attempt(conn, "mw", "multiway", "check", None, None,
+                                f"2026-07-18T12:00:{i:02d}")
+    db.insert_drill_attempt(conn, "k", "jamfold", "jam", False, 1.0,
+                            "2026-07-18T13:00:00")
+    rows = views.accuracy_by_kind(conn, window_days=7,
+                                  now="2026-07-19T00:00:00")
+    assert [r["kind"] for r in rows] == ["jamfold", "multiway"]
+    mw = rows[1]
+    assert mw["attempts"] == 3
+    assert mw["accuracy"] is None and mw["avg_ev_loss"] is None

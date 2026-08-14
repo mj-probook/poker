@@ -50,6 +50,9 @@ DATA_PATH = Path(__file__).resolve().parents[1] / "solver" / "data" / \
     "multiway_advisory.npz"
 
 MW_TABLE = ("BB", "CO", "BTN")     # postflop action order, 3 to the flop
+MW_SEATS_DEALT = 6                 # the 6-max table the hand was dealt at —
+                                   # the players-filter axis (MW_TABLE lists
+                                   # only the postflop SURVIVORS)
 MW_POT = 8.0                       # 3 × 2.5bb open + folded SB 0.5
 MW_STACK = 37.5                    # 40bb - the 2.5bb call
 MW_POPULATION_KEY = "6max:BB"      # the population table's own vocabulary
@@ -120,15 +123,36 @@ def build_advisory_solver(board_str: str) -> sg.SubgameSolver:
                             pot0=MW_POT)
 
 
-@lru_cache(maxsize=1)
-def load_multiway_advisory(path: str | None = None):
-    """{board5: (solver, stored avg, stored gap)} plus equities via
-    `load_equities` — the same rebuild-and-re-certify pattern as river.py."""
+def _artifact_path(path: str | None) -> Path:
+    """Existence-guarded artifact path — EVERY loader goes through this, so
+    a missing npz always names its regen command instead of numpy's bare
+    error (the builder calls `load_equities` first, which used to bypass
+    the friendly guard entirely)."""
     p = Path(path) if path else DATA_PATH
     if not p.exists():
         raise FileNotFoundError(
             f"multiway advisory artifact missing: {p}\n"
             "generate it with: uv run python scripts/gen_multiway_advisory.py")
+    return p
+
+
+def _require_board(solves: dict, board5: str):
+    """Drift between `river_boards()` and the shipped artifact is a stale
+    artifact, not a programming error — say so, with the fix."""
+    try:
+        return solves[board5]
+    except KeyError:
+        raise KeyError(
+            f"board {board5} not in the multiway advisory artifact — the "
+            "board list drifted; regenerate with: "
+            "uv run python scripts/gen_multiway_advisory.py") from None
+
+
+@lru_cache(maxsize=1)
+def load_multiway_advisory(path: str | None = None):
+    """{board5: (solver, stored avg, stored gap)} plus equities via
+    `load_equities` — the same rebuild-and-re-certify pattern as river.py."""
+    p = _artifact_path(path)
     out = {}
     with np.load(p) as d:
         boards = sorted({name.split("/")[1] for name in d.files
@@ -144,7 +168,7 @@ def load_multiway_advisory(path: str | None = None):
 @lru_cache(maxsize=1)
 def load_equities(path: str | None = None) -> dict[str, np.ndarray]:
     """{f"{board_str}|{street}": (169,) MC equity vs the field}."""
-    p = Path(path) if path else DATA_PATH
+    p = _artifact_path(path)
     with np.load(p) as d:
         return {name.split("/", 1)[1].replace("/", "|"): d[name]
                 for name in d.files if name.startswith("eq/")}
@@ -172,7 +196,7 @@ def _drill(street: str, board: tuple[int, ...], board_str: str, tex: str,
         tier=TIER_BEST_AVAILABLE,
         board=board_cards, hero_cards=hero_cards, table=MW_TABLE,
         population_key=MW_POPULATION_KEY,
-        advisory=advisory,
+        advisory=advisory, seats_dealt=MW_SEATS_DEALT,
     )
 
 
@@ -191,12 +215,11 @@ def _build_multiway_drills() -> list[Drill]:
     eq_note = (f"Monte Carlo vs two uniform hands, n={EQUITY_SAMPLES}, "
                f"seed=crc32(board:class) — advisory, not a grade")
     out: list[Drill] = []
-    textures = dict(river_boards())
     for board5, tex in river_boards():
         flop_str = board5[:6]
         flop = _cards(flop_str)
         river = _cards(board5)
-        solver, avg, gap = solves[board5]
+        solver, avg, gap = _require_board(solves, board5)
         labels, evs, freqs, _ = solver.root_action_evs(0, avg=avg)
         live_pos = {full: i for i, full in enumerate(solver.live.tolist())}
         for ci, cls in enumerate(hands.HAND_CLASSES):

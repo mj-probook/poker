@@ -116,8 +116,12 @@ def category_priority(conn: sqlite3.Connection) -> list[dict]:
       * `error_rate` — fraction of drill attempts answered wrong.
 
     A category missing from one source scores 0 there, never NULL, so callers
-    can sort on either field without special-casing. Derived, so it is a query
-    and never a table (plan §3).
+    can sort on either field without special-casing. Tier-3 drill attempts
+    (correct=NULL — no right/wrong claim, store/schema.sql) are excluded from
+    the drill side entirely: an all-NULL category has NO row here, because
+    "0 attempts, no signal" is honest and "error_rate 0.0" is a fabricated
+    never-wrong claim (review [2], 2026-08-01). Derived, so it is a query and
+    never a table (plan §3).
     """
     rows = conn.execute(
         "WITH hh AS ("
@@ -125,10 +129,16 @@ def category_priority(conn: sqlite3.Connection) -> list[dict]:
         "         100.0 * AVG(ev_loss) AS ev_loss_per_100"
         "    FROM gradings WHERE tier IN (1, 2) AND ev_loss IS NOT NULL"
         "   GROUP BY leak_key),"
+        # tier-3 attempts carry correct NULL (no right/wrong claim exists).
+        # Without the filter, an all-NULL category AVGs to NULL and the
+        # COALESCE below would FABRICATE error_rate 0.0 — a rate claim for
+        # the exact tier the NULL protects. Filtered, such a category simply
+        # has no dr row: attempts 0, no error signal (review [2], 2026-08-01).
         " dr AS ("
         "  SELECT leak_key, COUNT(*) AS attempts,"
         "         1.0 - AVG(correct) AS error_rate"
-        "    FROM drill_attempts GROUP BY leak_key),"
+        "    FROM drill_attempts WHERE correct IS NOT NULL"
+        "   GROUP BY leak_key),"
         " keys AS (SELECT leak_key FROM hh UNION SELECT leak_key FROM dr)"
         "SELECT k.leak_key,"
         "       COALESCE(hh.decisions, 0)          AS decisions,"
@@ -230,6 +240,13 @@ def accuracy_by_kind(conn: sqlite3.Connection, kind: str | None = None,
     PRICED attempts only, while `accuracy` counts every attempt including
     off-tree ones — answered wrong is answered wrong, but an unpriced action
     must never dilute an EV average with a fabricated 0.
+
+    Tier-3 attempts carry a NULL `correct` too (no right/wrong claim exists —
+    store/schema.sql). An all-NULL kind (multiway) keeps its row — practice
+    volume is real data — but its `accuracy` is None, a no-claim, and it sorts
+    BELOW every graded kind: unsorted, SQLite puts NULLs FIRST, which would
+    crown "no claim" the worst accuracy in a worst-first list (review [2],
+    2026-08-01).
     """
     ref = now if now is not None else datetime.now(timezone.utc).isoformat()
     rows = conn.execute(
@@ -239,7 +256,7 @@ def accuracy_by_kind(conn: sqlite3.Connection, kind: str | None = None,
         " WHERE ts >= datetime(?, ?)"
         "   AND (? IS NULL OR kind = ?)"
         " GROUP BY kind"
-        " ORDER BY accuracy, kind",
+        " ORDER BY accuracy IS NULL, accuracy, kind",
         (ref, f"-{int(window_days)} days", kind, kind),
     )
     return [dict(r) for r in rows]
